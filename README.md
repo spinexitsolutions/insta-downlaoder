@@ -34,7 +34,7 @@ All settings are environment variables. Locally you can put them in a `.env` fil
 | `ADSENSE_CLIENT` | AdSense publisher id `ca-pub-…`. Turns on the AdSense script, the verification meta tag and `/ads.txt` |
 | `ADSENSE_SLOT_TOP` / `_RESULT` / `_BOTTOM` | Optional ad unit ids for fixed ad positions. Without them, use Auto ads |
 | `GA_MEASUREMENT_ID` | Optional Google Analytics 4 id |
-| `INSTAGRAM_USERNAME` / `INSTAGRAM_PASSWORD` | Spare Instagram account the site logs in with (renews itself). Required for stories, strongly recommended on servers |
+| `INSTAGRAM_USERNAME` / `INSTAGRAM_PASSWORD` | Spare Instagram account the site logs in with, using a hidden browser (renews itself). Required for stories, strongly recommended on servers |
 | `INSTAGRAM_SESSIONID` / `INSTAGRAM_COOKIES` | Alternatives: a browser `sessionid` cookie or a `cookies.txt` export |
 | `RATE_LIMIT_PER_MINUTE` | Requests per IP per minute to `/api/info` (default 15) |
 
@@ -49,17 +49,21 @@ Any host that runs Docker works the same (Railway, Fly.io, a VPS with `docker bu
 
 ## Instagram login (needed for stories)
 
-Instagram only shows stories to logged-in users, and it rate-limits anonymous requests from servers. Give the site a **spare** Instagram account (not your main one) with **two-factor authentication turned off**. You set it up once; the site logs in by itself, saves the session, and logs in again automatically whenever Instagram expires it.
+Instagram only shows stories to logged-in users, and it distrusts logins made by scripts. So the site logs in the way a person does: it opens a real (hidden) Chrome browser with Playwright, signs in with a **spare** account, and keeps the session. When Instagram expires it, the site signs in again by itself. You never copy a `sessionid` by hand.
 
-**Locally:** run
+**One-time setup (locally):**
+
+```bash
+pip install -r requirements.txt
+```
 
 ```bash
 python login.py
 ```
 
-It asks for the username and password, checks that the login works and saves them to `.env`. Restart the site.
+Enter the spare account's username and password. A Chrome window opens and logs in on its own; if Instagram asks a security question ("Was this you?", a code by email), answer it in that window. The first run downloads Chromium automatically (~150 MB). Then restart the site.
 
-**On a live host:** add these environment variables:
+**On a live host:** set these environment variables (the Docker image already includes Chromium):
 
 ```
 INSTAGRAM_USERNAME=your_spare_account
@@ -68,13 +72,14 @@ INSTAGRAM_PASSWORD=its_password
 
 How it stays logged in:
 
-- The first request logs in and saves the session to `.instagram_session` (path set by `INSTAGRAM_SESSION_FILE`). Restarts reuse it.
-- If Instagram expires the session, the next request logs in again and retries. Login attempts are limited to one every 10 minutes so the account doesn't get flagged.
-- If Instagram asks "Was this you?", approve it once in the Instagram app. The terminal prints a message whenever login fails.
+- The session from the browser login is saved to `.instagram_session` and reused after restarts. The browser profile is kept in `.browser_profile/`, so Instagram sees the same device each time.
+- If Instagram expires the session, the next request logs in again with the hidden browser and retries. Login attempts are limited to one every 10 minutes so the account doesn't get flagged.
+- If Instagram demands a security check during an automatic login, the terminal says so; run `python login.py` once to complete it in a visible window.
+- Without Playwright the site falls back to instaloader's scripted login, which Instagram often rejects.
 
-Alternatives: `INSTAGRAM_SESSIONID` (the `sessionid` cookie copied from your browser) or `INSTAGRAM_COOKIES` (a `cookies.txt` export) also work, but they can't renew themselves. If you also set a password, the site falls back to it when they expire.
+Optional: `INSTAGRAM_SESSIONID` (a `sessionid` cookie) or `INSTAGRAM_COOKIES` (a `cookies.txt` export) still work if you prefer to provide a session yourself. `INSTAGRAM_BROWSER_PATH` points to an existing Chrome/Chromium instead of Playwright's.
 
-Keep the libraries updated: `pip install -U yt-dlp instaloader`.
+Check what Instagram answers at any time with `python check_instagram.py <username>`. Keep the libraries updated: `pip install -U yt-dlp instaloader playwright`.
 
 ## AdSense checklist
 

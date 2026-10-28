@@ -1,11 +1,11 @@
-"""One-time Instagram setup: saves the account to .env and checks that it works.
+"""One-time Instagram setup: logs in with a real browser and saves the account to .env.
 
-After this the site logs in by itself and logs in again whenever Instagram
-expires the session, so you don't have to repeat this.
+After this the site logs in by itself (with a hidden browser) and logs in again
+whenever Instagram expires the session, so you never copy a sessionid by hand.
 
     python login.py
 
-Use a spare Instagram account with two-factor authentication turned off.
+Use a spare Instagram account.
 """
 
 import getpass
@@ -26,25 +26,25 @@ def save_to_env(values):
 
 
 def main():
-    print("Instagram setup for story downloads (use a spare account with 2FA turned off).\n")
+    print("Instagram setup (use a spare account).")
+    print("A Chrome window will open and log in by itself. If Instagram asks a security")
+    print("question, answer it in that window.\n")
     username = input("Instagram username: ").strip().lstrip("@")
     password = getpass.getpass("Password (hidden while typing): ")
 
     os.environ["INSTAGRAM_USERNAME"] = username
     os.environ["INSTAGRAM_PASSWORD"] = password
+    os.environ.pop("INSTAGRAM_SESSIONID", None)
     import extractor  # uses the same login code as the site
 
-    try:
-        os.remove(extractor.SESSION_FILE)
-    except OSError:
-        pass
-    loader = extractor._password_login()
+    loader = extractor._password_login(headless=False)
     if not loader:
         sys.exit("\nLogin failed (see the message above). Nothing was saved.")
 
-    save_to_env({"INSTAGRAM_USERNAME": username, "INSTAGRAM_PASSWORD": password})
+    # The fresh browser session replaces any sessionid pasted by hand.
+    save_to_env({"INSTAGRAM_USERNAME": username, "INSTAGRAM_PASSWORD": password, "INSTAGRAM_SESSIONID": ""})
     print(f"\nDone. Saved @{username} to {ENV_PATH}")
-    print("Restart the site (Ctrl + C, then `python app.py`). It will stay logged in by itself.")
+    print("Restart the site (Ctrl + C, then `python app.py`). From now on it logs in by itself.")
 
 
 if __name__ == "__main__":

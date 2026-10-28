@@ -6,3 +6,4 @@ __pycache__
 cookies.txt
 .env
 .instagram_session
+.browser_profile

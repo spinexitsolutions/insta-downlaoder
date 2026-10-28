@@ -6,3 +6,4 @@ cookies.txt
 *.zip
 .env
 .instagram_session
+.browser_profile/

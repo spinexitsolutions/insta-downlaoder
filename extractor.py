@@ -20,6 +20,8 @@ import instaloader
 import requests
 import yt_dlp
 
+import browser_login
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
@@ -162,27 +164,61 @@ LOGIN_COOLDOWN_SECONDS = 600
 _last_login_attempt = [0.0]
 
 
-def _password_login():
-    """Log in with INSTAGRAM_USERNAME/INSTAGRAM_PASSWORD and save the session to disk."""
-    # Repeated failed logins get the account flagged, so try at most every 10 minutes.
-    if time.time() - _last_login_attempt[0] < LOGIN_COOLDOWN_SECONDS:
+def _save_session(cookies):
+    try:
+        with open(SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(cookies, f)
+    except OSError:
+        pass  # read-only disk: we'll just log in again after a restart
+
+
+def _saved_session():
+    try:
+        with open(SESSION_FILE, encoding="utf-8") as f:
+            cookies = json.load(f)
+        return cookies if isinstance(cookies, dict) and cookies.get("sessionid") else None
+    except (OSError, ValueError):
         return None
-    _last_login_attempt[0] = time.time()
+
+
+def _api_login():
+    """Fallback when no browser is available: instaloader's scripted login."""
     loader = _new_loader()
     try:
         loader.login(_username(), _password())
     except instaloader.exceptions.TwoFactorAuthRequiredException:
-        print("Auto login failed: the Instagram account has two-factor authentication on. "
-              "Turn 2FA off for this spare account so the site can log in by itself.", flush=True)
+        print("Login failed: the account has two-factor authentication on. Turn 2FA off for "
+              "this spare account, or install Playwright so the site can log in with a browser.", flush=True)
         return None
     except Exception as exc:
-        print(f"Auto login to Instagram failed: {exc}. If Instagram asks 'Was this you?', "
-              "approve it in the Instagram app.", flush=True)
+        print(f"Scripted Instagram login failed: {exc}", flush=True)
         return None
-    try:
-        loader.save_session_to_file(SESSION_FILE)
-    except OSError:
-        pass  # read-only disk: we'll just log in again after a restart
+    return loader.context._session.cookies.get_dict()
+
+
+def _password_login(headless=True):
+    """Log in with INSTAGRAM_USERNAME/INSTAGRAM_PASSWORD (real browser first) and save the session."""
+    # Repeated failed logins get the account flagged, so try at most every 10 minutes.
+    if time.time() - _last_login_attempt[0] < LOGIN_COOLDOWN_SECONDS:
+        return None
+    _last_login_attempt[0] = time.time()
+
+    cookies = None
+    if browser_login.available():
+        print("Logging in to Instagram with a browser...", flush=True)
+        try:
+            cookies = browser_login.login(_username(), _password(), headless=headless)
+        except Exception as exc:
+            print(f"Browser login failed: {type(exc).__name__}: {exc}", flush=True)
+    if not cookies:
+        cookies = _api_login()
+    if not cookies or not cookies.get("sessionid"):
+        return None
+
+    cookies.setdefault("csrftoken", _csrf)
+    _save_session(cookies)
+    loader = _new_loader()
+    loader.load_session(_username(), cookies)
     print(f"Logged in to Instagram as @{_username()}.", flush=True)
     return loader
 
@@ -190,20 +226,14 @@ def _password_login():
 def _build_loader(fresh_login=False):
     user = _username()
     if not fresh_login:
-        # A browser session (sessionid / cookies.txt) is trusted most by Instagram, so it
-        # wins; the password is then only used to log in again once it expires.
-        cookies = _env_cookies()
-        if cookies:
-            loader = _new_loader()
-            loader.load_session(user or "session", cookies)
-            return loader
-        if user and _password() and os.path.exists(SESSION_FILE):
-            loader = _new_loader()
-            try:
-                loader.load_session_from_file(user, SESSION_FILE)
+        # 1. Session saved by the last automatic login (the freshest one).
+        # 2. A sessionid / cookies.txt given by hand.
+        for cookies in (_saved_session() if user and _password() else None, _env_cookies()):
+            if cookies:
+                cookies.setdefault("csrftoken", _csrf)
+                loader = _new_loader()
+                loader.load_session(user or "session", cookies)
                 return loader
-            except Exception:
-                pass
     if user and _password():
         loader = _password_login()
         if loader:
