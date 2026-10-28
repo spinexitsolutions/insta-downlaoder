@@ -147,8 +147,11 @@ def login(username, password, headless=True, timeout=120, fresh=True):
                 url = page.url
                 if any(k in url for k in ("challenge", "two_factor", "checkpoint", "suspended")):
                     if headless:
-                        print(f"Instagram wants a security check ({url}). Run `python login.py` "
-                              "once to complete it in a browser window.", flush=True)
+                        print(f"Instagram wants a security check ({url}). Open the Instagram app "
+                              "on your phone and tap 'This was me' (or approve the new login under "
+                              "Settings > Accounts Center > Password and security > Where you're logged in). "
+                              "The site tries again by itself in 10 minutes. Locally you can also run "
+                              "`python login.py` to answer it in a window.", flush=True)
                         return None
                     if not warned:
                         print("Instagram is asking for a security check. Complete it in the "

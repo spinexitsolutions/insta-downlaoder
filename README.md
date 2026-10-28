@@ -45,7 +45,7 @@ All settings are environment variables. Locally you can put them in a `.env` fil
 3. In the service's **Environment** tab set `SITE_URL`, `CONTACT_EMAIL` and later `ADSENSE_CLIENT`.
 4. Add your domain under **Settings → Custom Domains** and point your DNS to it as Render shows.
 
-Any host that runs Docker works the same (Railway, Fly.io, a VPS with `docker build -t reelsaver . && docker run -p 80:8000 --env-file .env reelsaver`). Without Docker: `gunicorn -w 2 --threads 4 -t 120 -b 0.0.0.0:$PORT app:app` (see `Procfile`).
+Any host that runs Docker works the same (Railway, Fly.io, a VPS with `docker build -t reelsaver . && docker run -p 80:8000 --env-file .env reelsaver`). Without Docker: `gunicorn -w 1 --threads 16 -t 180 -b 0.0.0.0:$PORT app:app` (see `Procfile`).
 
 ## Instagram login (needed for stories)
 
