@@ -5,3 +5,4 @@ __pycache__
 *.zip
 cookies.txt
 .env
+.instagram_session

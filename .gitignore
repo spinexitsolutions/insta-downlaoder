@@ -5,3 +5,4 @@ venv/
 cookies.txt
 *.zip
 .env
+.instagram_session

@@ -34,9 +34,8 @@ All settings are environment variables. Locally you can put them in a `.env` fil
 | `ADSENSE_CLIENT` | AdSense publisher id `ca-pub-…`. Turns on the AdSense script, the verification meta tag and `/ads.txt` |
 | `ADSENSE_SLOT_TOP` / `_RESULT` / `_BOTTOM` | Optional ad unit ids for fixed ad positions. Without them, use Auto ads |
 | `GA_MEASUREMENT_ID` | Optional Google Analytics 4 id |
-| `INSTAGRAM_SESSIONID` | Instagram login session (from `python login.py` or the browser). Required for stories, strongly recommended on servers |
-| `INSTAGRAM_COOKIES` | Alternative to `INSTAGRAM_SESSIONID`: path to a `cookies.txt` export |
-| `INSTAGRAM_USERNAME` | Username of that account |
+| `INSTAGRAM_USERNAME` / `INSTAGRAM_PASSWORD` | Spare Instagram account the site logs in with (renews itself). Required for stories, strongly recommended on servers |
+| `INSTAGRAM_SESSIONID` / `INSTAGRAM_COOKIES` | Alternatives: a browser `sessionid` cookie or a `cookies.txt` export |
 | `RATE_LIMIT_PER_MINUTE` | Requests per IP per minute to `/api/info` (default 15) |
 
 ## Deploy (Render, easiest)
@@ -50,31 +49,32 @@ Any host that runs Docker works the same (Railway, Fly.io, a VPS with `docker bu
 
 ## Instagram login (needed for stories)
 
-Instagram only shows stories to logged-in users, and it rate-limits anonymous requests from servers. Give the site a login with a **spare** Instagram account (not your main one; it can get restricted).
+Instagram only shows stories to logged-in users, and it rate-limits anonymous requests from servers. Give the site a **spare** Instagram account (not your main one) with **two-factor authentication turned off**. You set it up once; the site logs in by itself, saves the session, and logs in again automatically whenever Instagram expires it.
 
-**Option A: login script (easiest)**
+**Locally:** run
 
 ```bash
 python login.py
 ```
 
-Enter the username and password (and 2FA code if asked). It saves `INSTAGRAM_SESSIONID` and `INSTAGRAM_USERNAME` to a `.env` file next to `app.py`. Restart the site.
+It asks for the username and password, checks that the login works and saves them to `.env`. Restart the site.
 
-**Option B: copy the sessionid from your browser** (use this if Instagram blocks the script login)
+**On a live host:** add these environment variables:
 
-1. Log in to the spare account on instagram.com in Chrome.
-2. Press F12 → **Application** → **Cookies** → `https://www.instagram.com`.
-3. Copy the value of `sessionid`.
-4. Create a `.env` file next to `app.py` with:
-   ```
-   INSTAGRAM_SESSIONID=paste_the_value_here
-   INSTAGRAM_USERNAME=your_spare_account
-   ```
-5. Restart the site.
+```
+INSTAGRAM_USERNAME=your_spare_account
+INSTAGRAM_PASSWORD=its_password
+```
 
-On a live host, add the same two values in the host's **Environment Variables** instead of a `.env` file. A full `cookies.txt` export also works via `INSTAGRAM_COOKIES=/path/to/cookies.txt`.
+How it stays logged in:
 
-Sessions expire after a few weeks or if you log out. When stories stop working (the terminal prints "Instagram login expired"), log in again. Keep the libraries updated: `pip install -U yt-dlp instaloader`.
+- The first request logs in and saves the session to `.instagram_session` (path set by `INSTAGRAM_SESSION_FILE`). Restarts reuse it.
+- If Instagram expires the session, the next request logs in again and retries. Login attempts are limited to one every 10 minutes so the account doesn't get flagged.
+- If Instagram asks "Was this you?", approve it once in the Instagram app. The terminal prints a message whenever login fails.
+
+Alternatives: `INSTAGRAM_SESSIONID` (the `sessionid` cookie copied from your browser) or `INSTAGRAM_COOKIES` (a `cookies.txt` export) also work, but they can't renew themselves. If you also set a password, the site falls back to it when they expire.
+
+Keep the libraries updated: `pip install -U yt-dlp instaloader`.
 
 ## AdSense checklist
 

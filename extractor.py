@@ -12,6 +12,7 @@ import re
 import secrets
 import tempfile
 import threading
+import time
 from http.cookiejar import MozillaCookieJar
 from urllib.parse import unquote, urlparse
 
@@ -110,19 +111,26 @@ def resolve_share(url):
 
 _loader = None
 _loader_lock = threading.Lock()
+# Cookies of the logged-in session currently in use (shared with yt-dlp).
+_active = {"cookies": None, "cookie_file": None}
+_csrf = secrets.token_hex(16)
+
+SESSION_FILE = os.environ.get("INSTAGRAM_SESSION_FILE") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".instagram_session")
 
 
-_session_cache = {}
+def _username():
+    return (os.environ.get("INSTAGRAM_USERNAME") or "").strip().lstrip("@")
 
 
-def _load_cookies():
-    """Instagram login cookies from INSTAGRAM_COOKIES (cookies.txt) or INSTAGRAM_SESSIONID."""
+def _password():
+    return os.environ.get("INSTAGRAM_PASSWORD") or ""
+
+
+def _env_cookies():
+    """Login cookies from INSTAGRAM_COOKIES (cookies.txt) or INSTAGRAM_SESSIONID."""
     path = os.environ.get("INSTAGRAM_COOKIES")
     sessionid = os.environ.get("INSTAGRAM_SESSIONID", "").strip().strip('"')
-    key = (path, sessionid)
-    if key in _session_cache:
-        return _session_cache[key]
-
     cookies = None
     if path and os.path.exists(path):
         jar = MozillaCookieJar(path)
@@ -131,55 +139,140 @@ def _load_cookies():
     elif sessionid:
         # The sessionid starts with the numeric user id: "1234567%3A...".
         cookies = {"sessionid": sessionid, "ds_user_id": unquote(sessionid).split(":")[0]}
-
     if not cookies or not cookies.get("sessionid"):
-        cookies = None
-    else:
-        # instaloader needs a csrftoken; Instagram accepts any value that matches the header.
-        cookies.setdefault("csrftoken", secrets.token_hex(16))
-    _session_cache[key] = cookies
+        return None
+    # instaloader needs a csrftoken; Instagram accepts any value that matches the header.
+    cookies.setdefault("csrftoken", _csrf)
     return cookies
 
 
-def cookie_file():
-    """Netscape cookies file for yt-dlp, written from INSTAGRAM_SESSIONID if needed."""
-    path = os.environ.get("INSTAGRAM_COOKIES")
-    if path and os.path.exists(path):
-        return path
-    cookies = _load_cookies()
-    if not cookies:
+def _new_loader():
+    return instaloader.Instaloader(
+        quiet=True,
+        sleep=False,
+        max_connection_attempts=1,
+        request_timeout=20,
+        download_video_thumbnails=False,
+        save_metadata=False,
+        user_agent=USER_AGENT,
+    )
+
+
+LOGIN_COOLDOWN_SECONDS = 600
+_last_login_attempt = [0.0]
+
+
+def _password_login():
+    """Log in with INSTAGRAM_USERNAME/INSTAGRAM_PASSWORD and save the session to disk."""
+    # Repeated failed logins get the account flagged, so try at most every 10 minutes.
+    if time.time() - _last_login_attempt[0] < LOGIN_COOLDOWN_SECONDS:
         return None
-    if "cookie_file" not in _session_cache:
+    _last_login_attempt[0] = time.time()
+    loader = _new_loader()
+    try:
+        loader.login(_username(), _password())
+    except instaloader.exceptions.TwoFactorAuthRequiredException:
+        print("Auto login failed: the Instagram account has two-factor authentication on. "
+              "Turn 2FA off for this spare account so the site can log in by itself.", flush=True)
+        return None
+    except Exception as exc:
+        print(f"Auto login to Instagram failed: {exc}. If Instagram asks 'Was this you?', "
+              "approve it in the Instagram app.", flush=True)
+        return None
+    try:
+        loader.save_session_to_file(SESSION_FILE)
+    except OSError:
+        pass  # read-only disk: we'll just log in again after a restart
+    print(f"Logged in to Instagram as @{_username()}.", flush=True)
+    return loader
+
+
+def _build_loader(fresh_login=False):
+    user = _username()
+    if not fresh_login:
+        # A session saved by an earlier auto login is the freshest one we have.
+        if user and _password() and os.path.exists(SESSION_FILE):
+            loader = _new_loader()
+            try:
+                loader.load_session_from_file(user, SESSION_FILE)
+                return loader
+            except Exception:
+                pass
+        cookies = _env_cookies()
+        if cookies:
+            loader = _new_loader()
+            loader.load_session(user or "session", cookies)
+            return loader
+    if user and _password():
+        loader = _password_login()
+        if loader:
+            return loader
+    return _new_loader()  # anonymous: posts and profiles still work
+
+
+def _activate(loader):
+    global _loader
+    _loader = loader
+    cookies = loader.context._session.cookies.get_dict() if loader.context.is_logged_in else {}
+    _active["cookies"] = cookies if cookies.get("sessionid") else None
+    _active["cookie_file"] = None
+
+
+def get_loader():
+    """The shared Instaloader. Call with _loader_lock held."""
+    if _loader is None:
+        _activate(_build_loader())
+    return _loader
+
+
+def relogin():
+    """Replace an expired session with a fresh password login. Call with _loader_lock held."""
+    if not (_username() and _password()):
+        return False
+    loader = _build_loader(fresh_login=True)
+    if not loader.context.is_logged_in:
+        return False
+    _activate(loader)
+    return True
+
+
+def is_logged_in():
+    return bool(_env_cookies()) or bool(_username() and _password())
+
+
+def _session_expired(exc):
+    if isinstance(exc, instaloader.exceptions.LoginRequiredException):
+        return True
+    text = str(exc).lower()
+    return any(k in text for k in ("401", "login", "checkpoint", "challenge_required"))
+
+
+def with_login_retry(fn):
+    """Run fn(loader) under the lock; if the session expired, log in again and retry once."""
+    with _loader_lock:
+        loader = get_loader()
+        try:
+            return fn(loader)
+        except Exception as exc:
+            if not (loader.context.is_logged_in and _session_expired(exc) and relogin()):
+                raise
+        return fn(_loader)
+
+
+def cookie_file():
+    """Netscape cookies file for yt-dlp with the active login, if any."""
+    path = os.environ.get("INSTAGRAM_COOKIES")
+    cookies = _active["cookies"]
+    if not cookies:
+        return path if path and os.path.exists(path) else None
+    if not _active["cookie_file"]:
         fd, tmp = tempfile.mkstemp(prefix="ig_cookies_", suffix=".txt")
         with os.fdopen(fd, "w") as f:
             f.write("# Netscape HTTP Cookie File\n")
             for name, value in cookies.items():
                 f.write(f".instagram.com\tTRUE\t/\tTRUE\t2147483647\t{name}\t{value}\n")
-        _session_cache["cookie_file"] = tmp
-    return _session_cache["cookie_file"]
-
-
-def get_loader():
-    global _loader
-    if _loader is None:
-        loader = instaloader.Instaloader(
-            quiet=True,
-            sleep=False,
-            max_connection_attempts=1,
-            request_timeout=20,
-            download_video_thumbnails=False,
-            save_metadata=False,
-            user_agent=USER_AGENT,
-        )
-        cookies = _load_cookies()
-        if cookies:
-            loader.load_session(os.environ.get("INSTAGRAM_USERNAME") or "session", cookies)
-        _loader = loader
-    return _loader
-
-
-def is_logged_in():
-    return bool(_load_cookies())
+        _active["cookie_file"] = tmp
+    return _active["cookie_file"]
 
 
 def _item(kind, url, thumbnail=None, width=None, height=None, duration=None):
@@ -188,25 +281,27 @@ def _item(kind, url, thumbnail=None, width=None, height=None, duration=None):
 
 
 def _post_via_instaloader(shortcode):
-    with _loader_lock:
-        loader = get_loader()
-        post = instaloader.Post.from_shortcode(loader.context, shortcode)
-        items = []
-        if post.typename == "GraphSidecar":
-            for node in post.get_sidecar_nodes():
-                if node.is_video:
-                    items.append(_item("video", node.video_url, node.display_url))
-                else:
-                    items.append(_item("image", node.display_url))
-        elif post.is_video:
-            items.append(_item("video", post.video_url, post.url, duration=post.video_duration))
-        else:
-            items.append(_item("image", post.url))
-        return {
-            "title": (post.caption or "").strip() or f"Post by @{post.owner_username}",
-            "username": post.owner_username,
-            "items": items,
-        }
+    return with_login_retry(lambda loader: _read_post(loader, shortcode))
+
+
+def _read_post(loader, shortcode):
+    post = instaloader.Post.from_shortcode(loader.context, shortcode)
+    items = []
+    if post.typename == "GraphSidecar":
+        for node in post.get_sidecar_nodes():
+            if node.is_video:
+                items.append(_item("video", node.video_url, node.display_url))
+            else:
+                items.append(_item("image", node.display_url))
+    elif post.is_video:
+        items.append(_item("video", post.video_url, post.url, duration=post.video_duration))
+    else:
+        items.append(_item("image", post.url))
+    return {
+        "title": (post.caption or "").strip() or f"Post by @{post.owner_username}",
+        "username": post.owner_username,
+        "items": items,
+    }
 
 
 def _best_progressive(entry):
@@ -308,12 +403,13 @@ def extract_post(shortcode, url):
 
 
 def extract_profile(username):
+    def read(loader):
+        profile = instaloader.Profile.from_username(loader.context, username)
+        pic = profile.get_profile_pic_url() if loader.context.is_logged_in else profile.profile_pic_url
+        return pic, profile.full_name
+
     try:
-        with _loader_lock:
-            loader = get_loader()
-            profile = instaloader.Profile.from_username(loader.context, username)
-            pic = profile.get_profile_pic_url() if loader.context.is_logged_in else profile.profile_pic_url
-            full_name = profile.full_name
+        pic, full_name = with_login_retry(read)
     except instaloader.exceptions.ProfileNotExistsException:
         raise ExtractError(f"No Instagram account called @{username}.")
     except Exception as exc:
@@ -328,26 +424,32 @@ def extract_profile(username):
 
 def extract_story(username, story_id=None):
     if not is_logged_in():
-        print("Story download needs an Instagram login. Run `python login.py` or set "
-              "INSTAGRAM_SESSIONID in .env (see README).", flush=True)
+        print("Story download needs an Instagram login. Set INSTAGRAM_USERNAME and "
+              "INSTAGRAM_PASSWORD in .env (see README).", flush=True)
         raise ExtractError("Story downloads are temporarily unavailable. Please try again later.")
+
+    def read(loader):
+        if not loader.context.is_logged_in:
+            raise instaloader.exceptions.LoginRequiredException("not logged in")
+        profile = instaloader.Profile.from_username(loader.context, username)
+        items = []
+        for story in loader.get_stories(userids=[profile.userid]):
+            for s in story.get_items():
+                if story_id and str(s.mediaid) != story_id:
+                    continue
+                if s.is_video:
+                    items.append(_item("video", s.video_url, s.url))
+                else:
+                    items.append(_item("image", s.url))
+        return items
+
     try:
-        with _loader_lock:
-            loader = get_loader()
-            profile = instaloader.Profile.from_username(loader.context, username)
-            items = []
-            for story in loader.get_stories(userids=[profile.userid]):
-                for s in story.get_items():
-                    if story_id and str(s.mediaid) != story_id:
-                        continue
-                    if s.is_video:
-                        items.append(_item("video", s.video_url, s.url))
-                    else:
-                        items.append(_item("image", s.url))
+        items = with_login_retry(read)
     except instaloader.exceptions.ProfileNotExistsException:
         raise ExtractError(f"No Instagram account called @{username}.")
     except instaloader.exceptions.LoginRequiredException:
-        print("Instagram login expired. Run `python login.py` again.", flush=True)
+        print("Instagram login is not working. Check INSTAGRAM_USERNAME / INSTAGRAM_PASSWORD "
+              "(see messages above).", flush=True)
         raise ExtractError("Story downloads are temporarily unavailable. Please try again later.")
     except Exception as exc:
         raise ExtractError(_friendly([exc]))
