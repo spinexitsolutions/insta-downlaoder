@@ -190,7 +190,13 @@ def _password_login():
 def _build_loader(fresh_login=False):
     user = _username()
     if not fresh_login:
-        # A session saved by an earlier auto login is the freshest one we have.
+        # A browser session (sessionid / cookies.txt) is trusted most by Instagram, so it
+        # wins; the password is then only used to log in again once it expires.
+        cookies = _env_cookies()
+        if cookies:
+            loader = _new_loader()
+            loader.load_session(user or "session", cookies)
+            return loader
         if user and _password() and os.path.exists(SESSION_FILE):
             loader = _new_loader()
             try:
@@ -198,11 +204,6 @@ def _build_loader(fresh_login=False):
                 return loader
             except Exception:
                 pass
-        cookies = _env_cookies()
-        if cookies:
-            loader = _new_loader()
-            loader.load_session(user or "session", cookies)
-            return loader
     if user and _password():
         loader = _password_login()
         if loader:
