@@ -350,6 +350,25 @@ def _api_json(loader, path, label, has_data, referer="https://www.instagram.com/
     return data
 
 
+def _lookup_user(loader, username):
+    """{id, full_name, pic} for a username: web API first (what instagram.com uses), then instaloader."""
+    try:
+        data = _web_api(loader, f"api/v1/users/web_profile_info/?username={username}",
+                        referer=f"https://www.instagram.com/{username}/")
+        user = (data.get("data") or {}).get("user")
+        if user and user.get("id"):
+            return {"id": str(user["id"]), "full_name": user.get("full_name"),
+                    "pic": user.get("profile_pic_url_hd") or user.get("profile_pic_url")}
+        if data.get("data", {}).get("user", "missing") is None:
+            raise instaloader.exceptions.ProfileNotExistsException(f"@{username} not found")
+    except (instaloader.exceptions.LoginRequiredException, instaloader.exceptions.ProfileNotExistsException):
+        raise
+    except Exception as exc:
+        _log(f"profile {username} via web api", exc)
+    profile = instaloader.Profile.from_username(loader.context, username)
+    return {"id": str(profile.userid), "full_name": profile.full_name, "pic": profile.profile_pic_url}
+
+
 def _post_via_api(shortcode):
     """Logged-in only: Instagram's mobile API, the most reliable source for posts."""
     def read(loader):
@@ -500,16 +519,16 @@ def extract_post(shortcode, url):
 
 def extract_profile(username):
     def read(loader):
-        profile = instaloader.Profile.from_username(loader.context, username)
-        pic = profile.profile_pic_url
+        user = _lookup_user(loader, username)
+        pic = user["pic"]
         if loader.context.is_logged_in:
             try:
-                data = _api_json(loader, f"api/v1/users/{profile.userid}/info/", f"profile {username}",
+                data = _api_json(loader, f"api/v1/users/{user['id']}/info/", f"profile {username}",
                                  lambda d: bool((d.get("user") or {}).get("hd_profile_pic_url_info")))
                 pic = (data.get("user") or {}).get("hd_profile_pic_url_info", {}).get("url") or pic
             except Exception as exc:
                 _log(f"profile {username} HD picture", exc)
-        return pic, profile.full_name
+        return pic, user["full_name"]
 
     try:
         pic, full_name = with_login_retry(read)
@@ -535,8 +554,7 @@ def extract_story(username, story_id=None):
     def read(loader):
         if not loader.context.is_logged_in:
             raise instaloader.exceptions.LoginRequiredException("not logged in")
-        profile = instaloader.Profile.from_username(loader.context, username)
-        uid = str(profile.userid)
+        uid = _lookup_user(loader, username)["id"]
 
         def reel_items(data):
             reel = (data.get("reels") or {}).get(uid) \
@@ -549,7 +567,7 @@ def extract_story(username, story_id=None):
         if not medias:
             # Older endpoint that instaloader uses; last resort.
             try:
-                for story in loader.get_stories(userids=[profile.userid]):
+                for story in loader.get_stories(userids=[int(uid)]):
                     for s in story.get_items():
                         item = _item("video", s.video_url, s.url) if s.is_video else _item("image", s.url)
                         medias.append((str(s.mediaid), [item]))

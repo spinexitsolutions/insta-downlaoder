@@ -58,13 +58,10 @@ def main():
     show("Who does Instagram think we are? (web)",
          lambda: (extractor._web_api(loader, "api/v1/accounts/current_user/?edit=true").get("user") or {}).get("username"))
 
-    profile = show(f"Profile @{target}", lambda: (lambda p: {
-        "userid": p.userid, "is_private": p.is_private, "followed_by_viewer": p.followed_by_viewer,
-        "blocked_by_viewer": getattr(p, "blocked_by_viewer", "?"),
-    })(instaloader.Profile.from_username(ctx, target)))
+    profile = show(f"Profile @{target}", lambda: extractor._lookup_user(loader, target))
     if not profile:
         return
-    uid = str(profile["userid"])
+    uid = str(profile["id"])
     path = f"api/v1/feed/reels_media/?reel_ids={uid}"
 
     show("Stories via web api", lambda: summarize_reels(extractor._web_api(loader, path), uid))
