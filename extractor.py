@@ -280,6 +280,50 @@ def _item(kind, url, thumbnail=None, width=None, height=None, duration=None):
             "width": width, "height": height, "duration": duration}
 
 
+def _log(where, exc):
+    """Print the real error to the terminal; users only see a friendly message."""
+    print(f"[{where}] {type(exc).__name__}: {exc}", flush=True)
+
+
+def _largest(candidates):
+    candidates = [c for c in candidates or [] if c.get("url")]
+    return max(candidates, key=lambda c: (c.get("width") or 0) * (c.get("height") or 0)) if candidates else None
+
+
+def _items_from_api_media(media):
+    """Photos/videos from an item of Instagram's mobile API (post, carousel or story)."""
+    items = []
+    for node in media.get("carousel_media") or [media]:
+        image = _largest((node.get("image_versions2") or {}).get("candidates"))
+        video = _largest(node.get("video_versions"))
+        if video:
+            items.append(_item("video", video["url"], image and image["url"],
+                               video.get("width"), video.get("height"), node.get("video_duration")))
+        elif image:
+            items.append(_item("image", image["url"], None, image.get("width"), image.get("height")))
+    return items
+
+
+def _post_via_api(shortcode):
+    """Logged-in only: Instagram's mobile API, the most reliable source for posts."""
+    def read(loader):
+        if not loader.context.is_logged_in:
+            raise RuntimeError("skipped: not logged in")
+        media_id = instaloader.Post.shortcode_to_mediaid(shortcode)
+        data = loader.context.get_iphone_json(f"api/v1/media/{media_id}/info/", {})
+        media = (data.get("items") or [None])[0]
+        if not media:
+            raise RuntimeError("media/info returned no items")
+        caption = (media.get("caption") or {}).get("text") or ""
+        username = (media.get("user") or {}).get("username")
+        return {
+            "title": caption.strip() or f"Post by @{username}",
+            "username": username,
+            "items": _items_from_api_media(media),
+        }
+    return with_login_retry(read)
+
+
 def _post_via_instaloader(shortcode):
     return with_login_retry(lambda loader: _read_post(loader, shortcode))
 
@@ -390,22 +434,32 @@ def _post_via_embed(shortcode):
 
 def extract_post(shortcode, url):
     errors = []
-    for attempt in (lambda: _post_via_instaloader(shortcode),
-                    lambda: _post_via_ytdlp(url),
-                    lambda: _post_via_embed(shortcode)):
+    for name, attempt in (("api", lambda: _post_via_api(shortcode)),
+                          ("instaloader", lambda: _post_via_instaloader(shortcode)),
+                          ("yt-dlp", lambda: _post_via_ytdlp(url)),
+                          ("embed", lambda: _post_via_embed(shortcode))):
         try:
             result = attempt()
             if result["items"]:
                 return result
+            _log(f"post {shortcode} via {name}", RuntimeError("no media found"))
         except Exception as exc:  # each backend raises its own error types
-            errors.append(exc)
+            _log(f"post {shortcode} via {name}", exc)
+            if not str(exc).startswith("skipped"):
+                errors.append(exc)
     raise ExtractError(_friendly(errors))
 
 
 def extract_profile(username):
     def read(loader):
         profile = instaloader.Profile.from_username(loader.context, username)
-        pic = profile.get_profile_pic_url() if loader.context.is_logged_in else profile.profile_pic_url
+        pic = profile.profile_pic_url
+        if loader.context.is_logged_in:
+            try:
+                data = loader.context.get_iphone_json(f"api/v1/users/{profile.userid}/info/", {})
+                pic = (data.get("user") or {}).get("hd_profile_pic_url_info", {}).get("url") or pic
+            except Exception as exc:
+                _log(f"profile {username} HD picture", exc)
         return pic, profile.full_name
 
     try:
@@ -413,6 +467,7 @@ def extract_profile(username):
     except instaloader.exceptions.ProfileNotExistsException:
         raise ExtractError(f"No Instagram account called @{username}.")
     except Exception as exc:
+        _log(f"profile {username}", exc)
         raise ExtractError(_friendly([exc]))
     return {
         "title": full_name or f"@{username}",
@@ -432,26 +487,36 @@ def extract_story(username, story_id=None):
         if not loader.context.is_logged_in:
             raise instaloader.exceptions.LoginRequiredException("not logged in")
         profile = instaloader.Profile.from_username(loader.context, username)
-        items = []
-        for story in loader.get_stories(userids=[profile.userid]):
-            for s in story.get_items():
-                if story_id and str(s.mediaid) != story_id:
-                    continue
-                if s.is_video:
-                    items.append(_item("video", s.video_url, s.url))
-                else:
-                    items.append(_item("image", s.url))
-        return items
+        try:
+            data = loader.context.get_iphone_json(f"api/v1/feed/reels_media/?reel_ids={profile.userid}", {})
+            reel = (data.get("reels") or {}).get(str(profile.userid)) \
+                or next(iter(data.get("reels_media") or []), None) or {}
+            medias = [(str(m.get("pk") or ""), _items_from_api_media(m)) for m in reel.get("items") or []]
+        except instaloader.exceptions.LoginRequiredException:
+            raise
+        except Exception as exc:
+            # Older endpoint that instaloader uses; kept as a fallback.
+            _log(f"story {username} via api", exc)
+            medias = []
+            for story in loader.get_stories(userids=[profile.userid]):
+                for s in story.get_items():
+                    item = _item("video", s.video_url, s.url) if s.is_video else _item("image", s.url)
+                    medias.append((str(s.mediaid), [item]))
+        if story_id and any(pk == story_id for pk, _ in medias):
+            medias = [(pk, its) for pk, its in medias if pk == story_id]
+        return [item for _, its in medias for item in its]
 
     try:
         items = with_login_retry(read)
     except instaloader.exceptions.ProfileNotExistsException:
         raise ExtractError(f"No Instagram account called @{username}.")
-    except instaloader.exceptions.LoginRequiredException:
+    except instaloader.exceptions.LoginRequiredException as exc:
+        _log(f"story {username}", exc)
         print("Instagram login is not working. Check INSTAGRAM_USERNAME / INSTAGRAM_PASSWORD "
               "(see messages above).", flush=True)
         raise ExtractError("Story downloads are temporarily unavailable. Please try again later.")
     except Exception as exc:
+        _log(f"story {username}", exc)
         raise ExtractError(_friendly([exc]))
     if not items:
         raise ExtractError(f"@{username} has no active stories right now (or the account is private).")
