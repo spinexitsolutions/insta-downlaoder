@@ -322,7 +322,10 @@ def _web_api(loader, path, referer="https://www.instagram.com/"):
         raise instaloader.exceptions.QueryReturnedNotFoundException("404 not found")
     if resp.status_code != 200:
         raise instaloader.exceptions.ConnectionException(f"web api answered {resp.status_code}")
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        raise instaloader.exceptions.ConnectionException("web api answered with a web page instead of JSON")
     if data.get("status") not in (None, "ok"):
         message = str(data.get("message") or data.get("status"))
         if any(k in message for k in ("login_required", "checkpoint", "challenge")):
@@ -332,10 +335,10 @@ def _web_api(loader, path, referer="https://www.instagram.com/"):
 
 
 def _api_json(loader, path, label, has_data, referer="https://www.instagram.com/"):
-    """Try the web API, then the mobile API; return the first response with data."""
+    """Try the mobile API, then the web API; return the first response with data."""
     data = {}
-    for name, fetch in (("web api", lambda: _web_api(loader, path, referer)),
-                        ("mobile api", lambda: loader.context.get_iphone_json(path, {}))):
+    for name, fetch in (("mobile api", lambda: loader.context.get_iphone_json(path, {})),
+                        ("web api", lambda: _web_api(loader, path, referer))):
         try:
             data = fetch()
         except instaloader.exceptions.LoginRequiredException:
