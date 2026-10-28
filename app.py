@@ -1,7 +1,7 @@
-"""Insta Downloader - paste an Instagram link, get the video.
+"""Instagram downloader website.
 
-Uses yt-dlp to resolve the post, then streams the video back to the browser
-as a file download.
+Paste a post, Reel, carousel, story or profile link and download the photos
+and videos. Media is streamed through this server from Instagram's CDN.
 """
 
 import os
@@ -10,214 +10,299 @@ import shutil
 import tempfile
 import threading
 import time
-from urllib.parse import urlparse
+from collections import defaultdict, deque
+from urllib.parse import urlencode, urlparse
 
 import requests
-from flask import Flask, Response, jsonify, render_template, request, send_file
 import yt_dlp
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
+
+import extractor
 
 app = Flask(__name__)
 
-INSTAGRAM_URL_RE = re.compile(
-    r"^https?://(www\.|m\.)?(instagram\.com|instagr\.am)/"
-    r"([A-Za-z0-9_.]+/)?(p|reel|reels|tv|share)/[A-Za-z0-9_\-]+",
-    re.IGNORECASE,
-)
+# Site settings, all overridable with environment variables so the same code
+# runs locally and on the live domain.
+SITE = {
+    "name": os.environ.get("SITE_NAME", "ReelSaver"),
+    "url": os.environ.get("SITE_URL", "").rstrip("/"),
+    "email": os.environ.get("CONTACT_EMAIL", "contact@example.com"),
+    # AdSense publisher id, e.g. "ca-pub-1234567890123456". Ads stay off until set.
+    "adsense_client": os.environ.get("ADSENSE_CLIENT", "").strip(),
+    "ad_slot_top": os.environ.get("ADSENSE_SLOT_TOP", "").strip(),
+    "ad_slot_result": os.environ.get("ADSENSE_SLOT_RESULT", "").strip(),
+    "ad_slot_bottom": os.environ.get("ADSENSE_SLOT_BOTTOM", "").strip(),
+    "ga_id": os.environ.get("GA_MEASUREMENT_ID", "").strip(),
+}
 
-# Only these hosts may be proxied, so /api/download can't be abused to fetch
+# Landing page per download type: slug -> copy. "" is the home page.
+TOOLS = {
+    "": {
+        "tab": "Video",
+        "h1": "Instagram Video Downloader",
+        "title": "Instagram Downloader – Download Reels, Videos, Photos & Stories",
+        "description": "Free Instagram downloader. Save Reels, videos, photos, carousels, stories and "
+                       "profile pictures in HD. Paste the link, no login or app needed.",
+        "lead": "Download Instagram videos, Reels, photos, carousels, stories and profile pictures in HD. Free, fast and no login.",
+        "placeholder": "Paste Instagram link here",
+    },
+    "instagram-reels-downloader": {
+        "tab": "Reels",
+        "h1": "Instagram Reels Downloader",
+        "title": "Instagram Reels Downloader – Save Reels in HD with Audio",
+        "description": "Download Instagram Reels in HD with original audio. Paste the Reel link and save it as MP4.",
+        "lead": "Save any public Instagram Reel as an HD MP4 with the original audio.",
+        "placeholder": "Paste Reel link, e.g. instagram.com/reel/...",
+    },
+    "instagram-photo-downloader": {
+        "tab": "Photo",
+        "h1": "Instagram Photo Downloader",
+        "title": "Instagram Photo Downloader – Save Instagram Pictures in Full Size",
+        "description": "Download Instagram photos in full resolution. Paste the post link and save the picture as JPG.",
+        "lead": "Download Instagram pictures in their original, full resolution.",
+        "placeholder": "Paste photo post link, e.g. instagram.com/p/...",
+    },
+    "instagram-carousel-downloader": {
+        "tab": "Carousel",
+        "h1": "Instagram Carousel Downloader",
+        "title": "Instagram Carousel Downloader – Download All Photos & Videos from a Post",
+        "description": "Download every photo and video from an Instagram carousel (multi-image post) at once.",
+        "lead": "Get every photo and video from a multi-image Instagram post in one go.",
+        "placeholder": "Paste carousel post link",
+    },
+    "instagram-story-downloader": {
+        "tab": "Story",
+        "h1": "Instagram Story Downloader",
+        "title": "Instagram Story Downloader – Save Stories Photos & Videos",
+        "description": "Download Instagram stories (photos and videos) from public accounts. Paste the story link or username.",
+        "lead": "Save photos and videos from public Instagram stories before they disappear.",
+        "placeholder": "Paste story link, e.g. instagram.com/stories/username/...",
+    },
+    "instagram-profile-picture-downloader": {
+        "tab": "Profile",
+        "h1": "Instagram Profile Picture Downloader",
+        "title": "Instagram Profile Picture Downloader – View & Save DP in Full Size",
+        "description": "View and download any Instagram profile picture (DP) in full size. Enter a username or profile link.",
+        "lead": "View and save any Instagram profile picture in full size. Enter a username or profile link.",
+        "placeholder": "Enter username or profile link, e.g. @username",
+    },
+}
+
+PAGES = {
+    "about": ("about.html", "About Us"),
+    "contact": ("contact.html", "Contact Us"),
+    "privacy-policy": ("privacy.html", "Privacy Policy"),
+    "terms": ("terms.html", "Terms of Use"),
+    "dmca": ("dmca.html", "DMCA & Copyright"),
+}
+
+# Only these hosts may be proxied, so /api/media can't be abused to fetch
 # arbitrary URLs from the server.
 ALLOWED_MEDIA_HOST_SUFFIXES = (".cdninstagram.com", ".fbcdn.net")
-
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-)
 
 CACHE_TTL_SECONDS = 600
 _cache = {}
 _cache_lock = threading.Lock()
 
-
-def normalize_url(url):
-    url = (url or "").strip()
-    if url and not url.startswith(("http://", "https://")):
-        url = "https://" + url
-    return url
+RATE_LIMIT = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "15"))
+_hits = defaultdict(deque)
+_hits_lock = threading.Lock()
 
 
-def is_instagram_url(url):
-    return bool(INSTAGRAM_URL_RE.match(url))
+@app.context_processor
+def inject_site():
+    base = SITE["url"] or request.url_root.rstrip("/")
+    return {"site": SITE, "base_url": base, "year": time.gmtime().tm_year, "tools": TOOLS}
 
 
-def ydl_options(**extra):
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": False,
-        "http_headers": {"User-Agent": USER_AGENT},
-    }
-    cookie_file = os.environ.get("INSTAGRAM_COOKIES")
-    if cookie_file and os.path.exists(cookie_file):
-        opts["cookiefile"] = cookie_file
-    opts.update(extra)
-    return opts
+def client_ip():
+    # Behind a host's proxy (Render, Railway, nginx) the real IP is the first forwarded one.
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    return forwarded.split(",")[0].strip() or request.remote_addr or "?"
 
 
-def extract_info(url):
-    """Return yt-dlp info for a post, cached briefly so download doesn't re-fetch."""
+def rate_limited():
+    now = time.time()
+    with _hits_lock:
+        q = _hits[client_ip()]
+        while q and now - q[0] > 60:
+            q.popleft()
+        if len(q) >= RATE_LIMIT:
+            return True
+        q.append(now)
+        if len(_hits) > 10000:
+            for ip in [ip for ip, d in _hits.items() if not d or now - d[-1] > 60]:
+                del _hits[ip]
+    return False
+
+
+def cached_extract(raw):
+    key = raw.strip()
     now = time.time()
     with _cache_lock:
-        hit = _cache.get(url)
+        hit = _cache.get(key)
         if hit and now - hit[0] < CACHE_TTL_SECONDS:
             return hit[1]
-    with yt_dlp.YoutubeDL(ydl_options()) as ydl:
-        info = ydl.extract_info(url, download=False)
-        info = ydl.sanitize_info(info)
+    result = extractor.extract(key)
     with _cache_lock:
-        _cache[url] = (now, info)
-        for key in [k for k, (t, _) in _cache.items() if now - t >= CACHE_TTL_SECONDS]:
-            del _cache[key]
-    return info
-
-
-def media_entries(info):
-    """Flatten a single post or a carousel into a list of entries."""
-    if info.get("_type") == "playlist" or info.get("entries"):
-        return [e for e in (info.get("entries") or []) if e]
-    return [info]
-
-
-def best_progressive_format(entry):
-    """Highest-quality format that already has video and audio in one file."""
-    formats = entry.get("formats") or []
-    progressive = [
-        f for f in formats
-        # A missing codec means "unknown", not "absent": Instagram's plain
-        # video_versions formats carry no codec info but include audio.
-        if f.get("url")
-        and f.get("vcodec") != "none"
-        and f.get("acodec") != "none"
-        and (f.get("protocol") or "https").startswith("http")
-    ]
-    if progressive:
-        return max(progressive, key=lambda f: (f.get("height") or 0, f.get("tbr") or 0))
-    # Instagram often returns a single top-level url with no formats list.
-    if not formats and entry.get("url"):
-        return {"url": entry["url"], "ext": entry.get("ext") or "mp4",
-                "height": entry.get("height"), "width": entry.get("width")}
-    return None
+        _cache[key] = (now, result)
+        for k in [k for k, (t, _) in _cache.items() if now - t >= CACHE_TTL_SECONDS]:
+            del _cache[k]
+    return result
 
 
 def is_allowed_media_url(url):
-    host = (urlparse(url).hostname or "").lower()
-    return any(host.endswith(suffix) for suffix in ALLOWED_MEDIA_HOST_SUFFIXES)
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and any(host.endswith(s) for s in ALLOWED_MEDIA_HOST_SUFFIXES)
 
 
-def safe_filename(name, ext):
-    name = re.sub(r"[^A-Za-z0-9_\-]+", "_", name or "instagram").strip("_")[:60]
-    return f"{name or 'instagram'}.{ext or 'mp4'}"
+def safe_name(name):
+    return re.sub(r"[^A-Za-z0-9_\-]+", "_", name or "instagram").strip("_")[:60] or "instagram"
 
 
-def friendly_error(exc):
-    msg = str(exc)
-    lowered = msg.lower()
-    if "login" in lowered or "private" in lowered or "rate-limit" in lowered:
-        return ("Instagram asked for a login for this post. It may be private, or the server is rate-limited. "
-                "Try again later, or set INSTAGRAM_COOKIES (see README).")
-    if "unsupported url" in lowered:
-        return "This link is not supported. Paste an Instagram post or reel link."
-    if "ffmpeg" in lowered:
-        return "This video needs ffmpeg to download. Install ffmpeg and restart the app (see README)."
-    if "no video" in lowered:
-        return "No video found in this post."
-    return "Could not fetch the video. Check the link and try again."
-
+# ---------------------------------------------------------------- pages
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", tool=TOOLS[""], slug="")
 
+
+@app.get("/<slug>")
+def page(slug):
+    if slug in TOOLS and slug:
+        return render_template("index.html", tool=TOOLS[slug], slug=slug)
+    if slug in PAGES:
+        template, title = PAGES[slug]
+        return render_template(template, title=title, slug=slug)
+    abort(404)
+
+
+@app.errorhandler(404)
+def not_found(_):
+    return render_template("404.html"), 404
+
+
+@app.get("/ads.txt")
+def ads_txt():
+    client = SITE["adsense_client"]
+    if not client:
+        return Response("", mimetype="text/plain")
+    pub = client.replace("ca-", "", 1)
+    return Response(f"google.com, {pub}, DIRECT, f08c47fec0942fa0\n", mimetype="text/plain")
+
+
+@app.get("/robots.txt")
+def robots_txt():
+    base = SITE["url"] or request.url_root.rstrip("/")
+    body = f"User-agent: *\nDisallow: /api/\nAllow: /\n\nSitemap: {base}/sitemap.xml\n"
+    return Response(body, mimetype="text/plain")
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml():
+    base = SITE["url"] or request.url_root.rstrip("/")
+    paths = list(TOOLS) + list(PAGES)
+    urls = "".join(f"<url><loc>{base}/{p}</loc></url>" for p in paths)
+    body = ('<?xml version="1.0" encoding="UTF-8"?>'
+            f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>')
+    return Response(body, mimetype="application/xml")
+
+
+# ---------------------------------------------------------------- API
 
 @app.post("/api/info")
 def api_info():
+    if rate_limited():
+        return jsonify(error="Too many requests. Please wait a minute and try again."), 429
     data = request.get_json(silent=True) or {}
-    url = normalize_url(data.get("url"))
-    if not is_instagram_url(url):
-        return jsonify(error="Paste a valid Instagram post, reel or IGTV link."), 400
+    raw = (data.get("url") or "").strip()[:500]
     try:
-        info = extract_info(url)
-    except Exception as exc:  # yt-dlp raises many error types
-        app.logger.warning("extract failed for %s: %s", url, exc)
-        return jsonify(error=friendly_error(exc)), 422
+        result = cached_extract(raw)
+    except extractor.ExtractError as exc:
+        return jsonify(error=str(exc)), 422
+    except Exception:
+        app.logger.exception("extract failed for %s", raw)
+        return jsonify(error="Something went wrong. Please try again."), 500
 
+    base = safe_name(f"{result.get('username') or 'instagram'}_{int(time.time())}")
     items = []
-    for i, entry in enumerate(media_entries(info)):
-        fmt = best_progressive_format(entry)
-        has_split_streams = any(
-            f.get("vcodec") != "none" for f in entry.get("formats") or []
-        )
-        if not fmt and not has_split_streams:
+    for i, item in enumerate(result["items"]):
+        ext = "mp4" if item["type"] == "video" else "jpg"
+        name = f"{base}_{i + 1}.{ext}" if len(result["items"]) > 1 else f"{base}.{ext}"
+        if item.get("url") and is_allowed_media_url(item["url"]):
+            download = "/api/media?" + urlencode({"src": item["url"], "name": name, "dl": 1})
+        elif item.get("merge"):
+            download = "/api/download?" + urlencode({**item["merge"], "name": name})
+        else:
             continue
+        thumb = item.get("thumbnail")
         items.append({
-            "index": i,
-            "thumbnail": entry.get("thumbnail"),
-            "duration": entry.get("duration"),
-            "width": (fmt or {}).get("width") or entry.get("width"),
-            "height": (fmt or {}).get("height") or entry.get("height"),
+            "type": item["type"],
+            "thumbnail": "/api/media?" + urlencode({"src": thumb}) if is_allowed_media_url(thumb) else None,
+            "download": download,
+            "duration": item.get("duration"),
+            "height": item.get("height"),
         })
 
     if not items:
-        return jsonify(error="No video found in this post."), 404
+        return jsonify(error="No downloadable media found in this link."), 404
 
     return jsonify(
-        title=info.get("title") or info.get("description") or "Instagram video",
-        uploader=info.get("uploader") or info.get("channel"),
+        kind=result["kind"],
+        title=(result.get("title") or "")[:200],
+        username=result.get("username"),
         items=items,
     )
 
 
+@app.get("/api/media")
+def api_media():
+    """Stream a photo or video from Instagram's CDN (inline preview or download)."""
+    src = request.args.get("src", "")
+    if not is_allowed_media_url(src):
+        abort(400)
+    filename = None
+    if request.args.get("dl"):
+        name = request.args.get("name", "")
+        filename = safe_name(name.rsplit(".", 1)[0]) + (".mp4" if name.endswith(".mp4") else ".jpg")
+    return stream_remote(src, filename)
+
+
 @app.get("/api/download")
 def api_download():
-    url = normalize_url(request.args.get("url"))
-    if not is_instagram_url(url):
-        return jsonify(error="Invalid Instagram link."), 400
+    """Download a video whose audio and video come as separate streams (merged by yt-dlp)."""
+    url = request.args.get("url", "")
     try:
+        kind, data = extractor.parse_target(url)
         index = int(request.args.get("index", 0))
-        info = extract_info(url)
-        entry = media_entries(info)[index]
-    except (ValueError, IndexError):
-        return jsonify(error="Video not found."), 404
-    except Exception as exc:
-        app.logger.warning("extract failed for %s: %s", url, exc)
-        return jsonify(error=friendly_error(exc)), 422
-
-    base = entry.get("uploader") or entry.get("id") or "instagram"
-    fmt = best_progressive_format(entry)
-
-    if fmt and is_allowed_media_url(fmt["url"]):
-        return stream_remote(fmt["url"], safe_filename(f"{base}_{entry.get('id', '')}", fmt.get("ext")))
-
-    # No single-file format: let yt-dlp download video+audio and merge (needs ffmpeg).
-    return download_and_merge(url, index, safe_filename(f"{base}_{entry.get('id', '')}", "mp4"))
+    except (extractor.ExtractError, ValueError):
+        abort(400)
+    if kind != "post":
+        abort(400)
+    filename = safe_name(request.args.get("name", "").rsplit(".", 1)[0]) + ".mp4"
+    return download_and_merge(data["url"], index, filename)
 
 
-def stream_remote(media_url, filename):
-    upstream = requests.get(
-        media_url,
-        stream=True,
-        timeout=30,
-        headers={"User-Agent": USER_AGENT, "Referer": "https://www.instagram.com/"},
-    )
+def stream_remote(media_url, filename=None):
+    try:
+        upstream = requests.get(
+            media_url, stream=True, timeout=30,
+            headers={"User-Agent": extractor.USER_AGENT, "Referer": "https://www.instagram.com/"},
+        )
+    except requests.RequestException:
+        return jsonify(error="Couldn't reach Instagram. Please try again."), 502
     if upstream.status_code != 200:
         upstream.close()
-        return jsonify(error="Instagram refused the download. Please try again."), 502
+        return jsonify(error="This link has expired. Paste the Instagram link again."), 502
 
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "Content-Type": upstream.headers.get("Content-Type", "video/mp4"),
-    }
+    headers = {"Content-Type": upstream.headers.get("Content-Type", "application/octet-stream")}
     if upstream.headers.get("Content-Length"):
         headers["Content-Length"] = upstream.headers["Content-Length"]
+    if filename:
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    else:
+        headers["Cache-Control"] = "public, max-age=3600"
 
     def generate():
         try:
@@ -234,7 +319,7 @@ def download_and_merge(url, index, filename):
     tmpdir = tempfile.mkdtemp(prefix="instadl_")
     # Merging separate video/audio streams needs ffmpeg; without it take the
     # best single file instead of failing.
-    opts = ydl_options(
+    opts = extractor.ydl_options(
         format="bv*+ba/b" if shutil.which("ffmpeg") else "b",
         merge_output_format="mp4",
         outtmpl=os.path.join(tmpdir, "%(id)s.%(ext)s"),
@@ -253,7 +338,7 @@ def download_and_merge(url, index, filename):
     except Exception as exc:
         shutil.rmtree(tmpdir, ignore_errors=True)
         app.logger.warning("download failed for %s: %s", url, exc)
-        return jsonify(error=friendly_error(exc)), 422
+        return jsonify(error="Couldn't download this video. Please try again."), 502
 
 
 if __name__ == "__main__":

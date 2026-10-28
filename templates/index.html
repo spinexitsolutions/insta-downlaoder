@@ -1,281 +1,208 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Insta Downloader</title>
-  <meta name="description" content="Paste an Instagram reel or post link and download the video.">
-  <style>
-    :root {
-      --bg: #faf7f5;
-      --card: #ffffff;
-      --text: #1d1a1f;
-      --muted: #6b6470;
-      --border: #e8e2e6;
-      --accent: #d6246e;
-      --accent-2: #f77737;
-      --error-bg: #fdecef;
-      --error-text: #a3123f;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #141215;
-        --card: #1e1b20;
-        --text: #f3eff4;
-        --muted: #a49ca8;
-        --border: #2f2a33;
-        --error-bg: #3a1621;
-        --error-text: #ff9db5;
-      }
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--text);
-      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    }
-    main { max-width: 640px; margin: 0 auto; padding: 48px 16px 64px; }
-    h1 {
-      margin: 0 0 6px;
-      font-size: clamp(28px, 6vw, 40px);
-      letter-spacing: -0.02em;
-      background: linear-gradient(90deg, var(--accent-2), var(--accent));
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-    .sub { margin: 0 0 28px; color: var(--muted); }
-    form {
-      display: flex;
-      gap: 8px;
-      padding: 8px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-    }
-    input {
-      flex: 1;
-      min-width: 0;
-      padding: 12px;
-      border: 0;
-      background: transparent;
-      color: var(--text);
-      font-size: 16px;
-      outline: none;
-    }
-    button, .btn {
-      border: 0;
-      border-radius: 10px;
-      padding: 12px 18px;
-      font-family: inherit;
-      font-size: 15px;
-      font-weight: 600;
-      line-height: 1.2;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      white-space: nowrap;
-    }
-    .ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-    .primary { background: linear-gradient(90deg, var(--accent-2), var(--accent)); color: #fff; }
-    button:disabled { opacity: .6; cursor: wait; }
-    .status { margin: 16px 0 0; color: var(--muted); min-height: 24px; }
-    .error {
-      margin-top: 16px;
-      padding: 12px 14px;
-      border-radius: 10px;
-      background: var(--error-bg);
-      color: var(--error-text);
-    }
-    .meta { margin: 28px 0 12px; }
-    .meta strong { display: block; }
-    .meta span { color: var(--muted); font-size: 14px; }
-    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-    .item {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-    .thumb { aspect-ratio: 9 / 16; background: var(--border); position: relative; }
-    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .badge {
-      position: absolute; right: 8px; bottom: 8px;
-      background: rgba(0,0,0,.7); color: #fff;
-      font-size: 12px; padding: 2px 8px; border-radius: 6px;
-    }
-    .item .btn { margin: 10px; }
-    .steps { margin-top: 40px; color: var(--muted); font-size: 14px; }
-    .steps ol { padding-left: 20px; }
-    .spinner {
-      width: 14px; height: 14px; border-radius: 50%;
-      border: 2px solid currentColor; border-right-color: transparent;
-      display: inline-block; animation: spin .8s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @media (max-width: 480px) {
-      form { flex-wrap: wrap; }
-      input { flex-basis: 100%; }
-      form button { flex: 1; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Insta Downloader</h1>
-    <p class="sub">Paste an Instagram reel or post link and download the video.</p>
+{% extends "base.html" %}
+{% from "_ad.html" import ad with context %}
+{% block title %}{{ tool.title }}{% endblock %}
+{% block description %}{{ tool.description }}{% endblock %}
 
-    <form id="form" autocomplete="off">
-      <input id="url" type="url" inputmode="url" placeholder="https://www.instagram.com/reel/..." required>
-      <button type="button" id="paste" class="ghost">Paste</button>
-      <button type="submit" id="go" class="primary">Download</button>
-    </form>
+{% set faqs = [
+  ("Is " ~ site.name ~ " free to use?", "Yes. " ~ site.name ~ " is completely free. There is no sign-up, no subscription and no limit on how many public posts you can save."),
+  ("What can I download?", "Reels, videos, IGTV, photos, carousel (multi-image) posts, stories and profile pictures from public Instagram accounts."),
+  ("Do I need to log in to Instagram?", "No. You never enter your Instagram username or password on " ~ site.name ~ ". Just paste a link."),
+  ("Can I download from private accounts?", "No. We only work with content that is publicly visible on Instagram. Private accounts are protected and we respect that."),
+  ("Where are downloaded files saved?", "Files go to your device's default Downloads folder. On iPhone, open the Files app and look in Downloads; on Android, check the Downloads folder or your gallery."),
+  ("What quality are the downloads?", "We fetch the highest quality Instagram provides, usually up to 1080p for videos and full resolution for photos."),
+  ("Does it work on iPhone and Android?", "Yes. " ~ site.name ~ " runs in any modern browser on iPhone, Android, Windows, Mac and Linux. No app is needed."),
+  ("Is it legal to download Instagram videos?", "Saving content for personal, offline viewing is generally fine, but the content belongs to its creator. Don't re-upload or use it commercially without the owner's permission."),
+] %}
+
+{% block head %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebApplication",
+      "name": "{{ site.name }}",
+      "url": "{{ base_url }}/{{ slug }}",
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "Any",
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {% for q, a in faqs %}{"@type": "Question", "name": {{ q|tojson }}, "acceptedAnswer": {"@type": "Answer", "text": {{ a|tojson }}}}{{ "," if not loop.last }}
+        {% endfor %}
+      ]
+    }
+  ]
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="container">
+    <nav class="tabs" aria-label="Download type">
+      {% for s, t in tools.items() %}
+      <a class="tab{{ ' active' if s == slug }}" href="/{{ s }}"{% if s == slug %} aria-current="page"{% endif %}>{{ t.tab }}</a>
+      {% endfor %}
+    </nav>
+
+    <h1>{{ tool.h1.rsplit(' ', 1)[0] }} <span class="accent">{{ tool.h1.rsplit(' ', 1)[1] }}</span></h1>
+    <p class="lead">{{ tool.lead }}</p>
+
+    <div class="search-card">
+      <form class="search-form" id="form" autocomplete="off" novalidate>
+        <label class="input-wrap">
+          <span class="sr-only" style="position:absolute;left:-9999px">Instagram link</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          <input id="url" type="text" inputmode="url" placeholder="{{ tool.placeholder }}" required>
+          <button type="button" class="paste-btn" id="paste">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+            <span id="paste-label">Paste</span>
+          </button>
+        </label>
+        <button type="submit" class="btn btn-primary btn-go" id="go">Download</button>
+      </form>
+    </div>
+
+    <ul class="trust">
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>100% free</li>
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>No login</li>
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>HD quality</li>
+      <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>No watermark</li>
+    </ul>
 
     <div id="status" class="status" aria-live="polite"></div>
-    <div id="result"></div>
-
-    <div class="steps">
-      <strong>How to use</strong>
-      <ol>
-        <li>Open the reel or post on Instagram and tap <em>Share → Copy link</em>.</li>
-        <li>Paste it above. It starts automatically.</li>
-        <li>Hit <em>Download</em> under the video.</li>
-      </ol>
-      Only public posts work. Please respect creators' rights.
+    <div id="error" class="alert" role="alert" hidden></div>
+    <div id="results" class="results" hidden>
+      <div class="result-head">
+        <div class="avatar" id="r-avatar">@</div>
+        <div style="min-width:0">
+          <strong id="r-user"></strong>
+          <span id="r-title"></span>
+        </div>
+      </div>
+      <div class="result-grid" id="r-grid"></div>
     </div>
-  </main>
+  </div>
+</section>
 
-  <script>
-    const form = document.getElementById("form");
-    const input = document.getElementById("url");
-    const goBtn = document.getElementById("go");
-    const pasteBtn = document.getElementById("paste");
-    const statusEl = document.getElementById("status");
-    const resultEl = document.getElementById("result");
+{{ ad(site.ad_slot_top) }}
 
-    const IG_RE = /instagram\.com\/|instagr\.am\//i;
+<section class="section" id="how-it-works">
+  <div class="container">
+    <div class="section-head">
+      <h2>How to download from Instagram</h2>
+      <p>Three quick steps. Works the same on phone and computer.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Copy the link</h3>
+        <p>Open the Reel, post or story in Instagram, tap <strong>⋯</strong> or <strong>Share</strong>, then <strong>Copy link</strong>. For a profile picture, just copy the username.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Paste it above</h3>
+        <p>Paste the link in the box at the top of this page. We fetch the media automatically, there's nothing else to fill in.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Download</h3>
+        <p>Preview the photos and videos and tap <strong>Download</strong>. The file is saved straight to your device.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-    function setLoading(on) {
-      goBtn.disabled = on;
-      goBtn.innerHTML = on ? '<span class="spinner"></span> Fetching' : "Download";
-      statusEl.textContent = on ? "Fetching video details..." : "";
-    }
+<section class="section alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Everything from Instagram, in one place</h2>
+      <p>One tool for every kind of Instagram content.</p>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3z"/></svg></div>
+        <h3><a href="/instagram-reels-downloader">Reels &amp; Videos</a></h3>
+        <p>Save Reels, feed videos and IGTV as MP4 in HD with the original sound.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg></div>
+        <h3><a href="/instagram-photo-downloader">Photos</a></h3>
+        <p>Download pictures in their original full resolution as JPG.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="15" height="15" rx="2"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg></div>
+        <h3><a href="/instagram-carousel-downloader">Carousels</a></h3>
+        <p>Get every photo and video from a multi-image post, each with its own download button.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-dasharray="4 3"/><circle cx="12" cy="12" r="4"/></svg></div>
+        <h3><a href="/instagram-story-downloader">Stories</a></h3>
+        <p>Keep photos and videos from public stories before they disappear after 24 hours.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></div>
+        <h3><a href="/instagram-profile-picture-downloader">Profile pictures</a></h3>
+        <p>View any Instagram DP in full size instead of the tiny circle in the app.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+        <h3>Private &amp; secure</h3>
+        <p>No account, no tracking of what you download, and we never store your files.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-    function showError(msg) {
-      resultEl.innerHTML = "";
-      const div = document.createElement("div");
-      div.className = "error";
-      div.textContent = msg;
-      resultEl.appendChild(div);
-    }
+<section class="section">
+  <div class="container narrow prose">
+    <h2>The free Instagram downloader for every device</h2>
+    <p>
+      Instagram doesn't let you save videos, Reels or full-size photos to your phone. {{ site.name }} fixes that.
+      Paste the link of any public post and you'll get direct download buttons for every photo and video in it,
+      at the best quality Instagram has. There's no app to install and no account to create, so it works the same
+      on iPhone, Android, Windows and Mac.
+    </p>
+    <h3>Why people use {{ site.name }}</h3>
+    <ul>
+      <li><strong>Watch offline:</strong> keep tutorials, recipes and workouts for when you have no data connection.</li>
+      <li><strong>Back up your own posts:</strong> download your own Reels and photos in their original quality.</li>
+      <li><strong>Save stories:</strong> stories vanish after 24 hours; keep the ones that matter.</li>
+      <li><strong>Get the full picture:</strong> see profile pictures in full size instead of a small circle.</li>
+    </ul>
+    <h3>Please respect creators</h3>
+    <p>
+      Everything on Instagram belongs to the person who posted it. Use {{ site.name }} for personal viewing and
+      backups, and ask for permission before reusing someone else's content. Read our
+      <a href="/terms">Terms of Use</a> and <a href="/dmca">DMCA policy</a> for details.
+    </p>
+  </div>
+</section>
 
-    function fmtDuration(sec) {
-      if (!sec) return "";
-      sec = Math.round(sec);
-      return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
-    }
+<section class="section alt" id="faq">
+  <div class="container">
+    <div class="section-head">
+      <h2>Frequently asked questions</h2>
+    </div>
+    <div class="faq">
+      {% for q, a in faqs %}
+      <details{% if loop.first %} open{% endif %}>
+        <summary>{{ q }}</summary>
+        <p>{{ a }}</p>
+      </details>
+      {% endfor %}
+    </div>
+  </div>
+</section>
 
-    function render(data, url) {
-      resultEl.innerHTML = "";
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      const title = document.createElement("strong");
-      title.textContent = (data.title || "Instagram video").slice(0, 120);
-      meta.appendChild(title);
-      if (data.uploader) {
-        const by = document.createElement("span");
-        by.textContent = "@" + data.uploader;
-        meta.appendChild(by);
-      }
-      resultEl.appendChild(meta);
+{{ ad(site.ad_slot_bottom) }}
 
-      const grid = document.createElement("div");
-      grid.className = "grid";
-      for (const item of data.items) {
-        const card = document.createElement("div");
-        card.className = "item";
+<template id="result-ad">{{ ad(site.ad_slot_result) }}</template>
+{% endblock %}
 
-        const thumb = document.createElement("div");
-        thumb.className = "thumb";
-        if (item.thumbnail) {
-          const img = document.createElement("img");
-          img.src = item.thumbnail;
-          img.alt = "Video preview";
-          img.loading = "lazy";
-          img.referrerPolicy = "no-referrer";
-          img.onerror = () => img.remove();
-          thumb.appendChild(img);
-        }
-        const dur = fmtDuration(item.duration);
-        if (dur) {
-          const badge = document.createElement("span");
-          badge.className = "badge";
-          badge.textContent = dur;
-          thumb.appendChild(badge);
-        }
-        card.appendChild(thumb);
-
-        const a = document.createElement("a");
-        a.className = "btn primary";
-        a.href = "/api/download?" + new URLSearchParams({ url, index: item.index });
-        a.textContent = data.items.length > 1 ? `Download video ${item.index + 1}` : "Download video";
-        if (item.height) a.title = item.height + "p";
-        card.appendChild(a);
-
-        grid.appendChild(card);
-      }
-      resultEl.appendChild(grid);
-    }
-
-    let inFlight = false;
-    async function fetchInfo() {
-      const url = input.value.trim();
-      if (!url || inFlight) return;
-      if (!IG_RE.test(url)) {
-        showError("That doesn't look like an Instagram link.");
-        return;
-      }
-      inFlight = true;
-      setLoading(true);
-      resultEl.innerHTML = "";
-      try {
-        const res = await fetch("/api/info", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Something went wrong.");
-        render(data, url);
-      } catch (err) {
-        showError(err.message || "Network error. Please try again.");
-      } finally {
-        inFlight = false;
-        setLoading(false);
-      }
-    }
-
-    form.addEventListener("submit", (e) => { e.preventDefault(); fetchInfo(); });
-
-    // Auto-start when a link is pasted into the box.
-    input.addEventListener("paste", () => setTimeout(fetchInfo, 0));
-
-    pasteBtn.addEventListener("click", async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) { input.value = text.trim(); fetchInfo(); }
-      } catch {
-        input.focus();
-        statusEl.textContent = "Clipboard access blocked. Long-press the box and paste.";
-      }
-    });
-  </script>
-</body>
-</html>
+{% block scripts %}
+<script src="{{ url_for('static', filename='app.js') }}" defer></script>
+{% endblock %}

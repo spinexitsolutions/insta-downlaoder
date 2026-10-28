@@ -1,0 +1,28 @@
+{% extends "page_base.html" %}
+{% block description %}{{ site.name }} DMCA and copyright policy: how to submit a takedown request.{% endblock %}
+{% block subtitle %}<p>We respect the intellectual property of creators.</p>{% endblock %}
+{% block body %}
+<p>
+  {{ site.name }} does not host any videos, images or other media. All content is retrieved directly from Instagram's
+  servers at the moment a user requests it, and we do not keep copies. Even so, we take copyright seriously and will
+  respond to valid notices.
+</p>
+
+<h2>Submitting a DMCA notice</h2>
+<p>If you believe your copyrighted work is being made available through our Service in a way that infringes your rights, email <a href="mailto:{{ site.email }}">{{ site.email }}</a> with the subject "DMCA Notice" and include:</p>
+<ol>
+  <li>Your full name, address, phone number and email address.</li>
+  <li>A description of the copyrighted work you believe is infringed.</li>
+  <li>The Instagram URL(s) of the content in question.</li>
+  <li>A statement that you have a good-faith belief that the use is not authorised by the copyright owner, its agent or the law.</li>
+  <li>A statement, under penalty of perjury, that the information in your notice is accurate and that you are the copyright owner or authorised to act on their behalf.</li>
+  <li>Your physical or electronic signature.</li>
+</ol>
+
+<h2>What happens next</h2>
+<p>
+  On receiving a valid notice we will block the listed URLs from being processed by {{ site.name }}, usually within
+  48 hours. For removal of the content from Instagram itself, please also report it directly to Instagram, since the
+  original content is hosted there.
+</p>
+{% endblock %}

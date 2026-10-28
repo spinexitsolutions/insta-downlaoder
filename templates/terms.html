@@ -1,0 +1,51 @@
+{% extends "page_base.html" %}
+{% block description %}Terms of Use for {{ site.name }}. Please read these terms before using the service.{% endblock %}
+{% block subtitle %}<p>Last updated: October 28, 2026</p>{% endblock %}
+{% block body %}
+<p>By accessing or using {{ site.name }} (the "Service") you agree to these Terms of Use. If you do not agree, please do not use the Service.</p>
+
+<h2>1. The Service</h2>
+<p>
+  {{ site.name }} provides a tool that retrieves publicly available media from Instagram at your request so you can
+  save it for personal, non-commercial use. We do not host any of this content; files are fetched from Instagram's
+  servers when you request them.
+</p>
+
+<h2>2. Acceptable use</h2>
+<p>You agree that you will:</p>
+<ul>
+  <li>Only download content you own, or content you have permission to save, for personal and non-commercial use.</li>
+  <li>Not re-upload, redistribute, sell or publicly display downloaded content without the copyright owner's permission.</li>
+  <li>Not use the Service to infringe copyright, trademark, privacy or any other rights.</li>
+  <li>Not attempt to overload, scrape, reverse engineer or disrupt the Service, or use it through automated means.</li>
+  <li>Comply with Instagram's Terms of Use and all applicable laws.</li>
+</ul>
+
+<h2>3. Intellectual property</h2>
+<p>
+  All content available through Instagram belongs to its respective owners. {{ site.name }} claims no ownership of
+  it. You are solely responsible for how you use any content you download. See our <a href="/dmca">DMCA policy</a>
+  for copyright complaints.
+</p>
+
+<h2>4. No affiliation</h2>
+<p>{{ site.name }} is not affiliated with, endorsed by or sponsored by Instagram or Meta Platforms, Inc.</p>
+
+<h2>5. Disclaimer of warranties</h2>
+<p>
+  The Service is provided "as is" and "as available" without warranties of any kind. We do not guarantee that the
+  Service will be uninterrupted, error-free, or that any particular content can be downloaded.
+</p>
+
+<h2>6. Limitation of liability</h2>
+<p>
+  To the maximum extent permitted by law, {{ site.name }} will not be liable for any indirect, incidental or
+  consequential damages arising from your use of, or inability to use, the Service or any content obtained through it.
+</p>
+
+<h2>7. Changes and termination</h2>
+<p>We may modify or discontinue the Service, or update these Terms, at any time. Continued use after changes means you accept the updated Terms. We may block access to anyone who misuses the Service.</p>
+
+<h2>8. Contact</h2>
+<p>Questions about these Terms? Email <a href="mailto:{{ site.email }}">{{ site.email }}</a>.</p>
+{% endblock %}

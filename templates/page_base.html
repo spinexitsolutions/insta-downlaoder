@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} – {{ site.name }}{% endblock %}
+{% block content %}
+<section class="page-hero">
+  <div class="container narrow">
+    <h1>{{ title }}</h1>
+    {% block subtitle %}{% endblock %}
+  </div>
+</section>
+<section class="page-body">
+  <div class="container narrow prose">
+    {% block body %}{% endblock %}
+  </div>
+</section>
+{% endblock %}

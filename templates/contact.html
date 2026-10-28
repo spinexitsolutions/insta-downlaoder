@@ -1,0 +1,16 @@
+{% extends "page_base.html" %}
+{% block description %}Contact the {{ site.name }} team for support, feedback, business or copyright enquiries.{% endblock %}
+{% block subtitle %}<p>We usually reply within 1–2 business days.</p>{% endblock %}
+{% block body %}
+<p>Have a question, found a bug, or want to suggest a feature? We'd love to hear from you.</p>
+<div class="contact-card">
+  <h3 style="margin-top:0">Email</h3>
+  <p style="margin:0"><a href="mailto:{{ site.email }}">{{ site.email }}</a></p>
+</div>
+<h2>Before you write</h2>
+<ul>
+  <li><strong>A download isn't working?</strong> Make sure the account is public and the link is copied from Instagram's Share menu. Include the link in your email so we can check it.</li>
+  <li><strong>Copyright or removal request?</strong> Please follow the steps on our <a href="/dmca">DMCA page</a> so we can act quickly.</li>
+  <li><strong>Privacy question?</strong> See our <a href="/privacy-policy">Privacy Policy</a>.</li>
+</ul>
+{% endblock %}

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: reelsaver
+    runtime: docker
+    plan: starter
+    healthCheckPath: /robots.txt
+    envVars:
+      - key: SITE_NAME
+        value: ReelSaver
+      - key: SITE_URL
+        sync: false
+      - key: CONTACT_EMAIL
+        sync: false
+      - key: ADSENSE_CLIENT
+        sync: false

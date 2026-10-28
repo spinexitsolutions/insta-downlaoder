@@ -1,0 +1,15 @@
+{# Renders a responsive AdSense unit only when both the publisher id and slot id are configured. #}
+{% macro ad(slot) -%}
+{% if site.adsense_client and slot %}
+<div class="ad-slot container">
+  <span class="ad-label">Advertisement</span>
+  <ins class="adsbygoogle"
+       style="display:block"
+       data-ad-client="{{ site.adsense_client }}"
+       data-ad-slot="{{ slot }}"
+       data-ad-format="auto"
+       data-full-width-responsive="true"></ins>
+  <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+</div>
+{% endif %}
+{%- endmacro %}
