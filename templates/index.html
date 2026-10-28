@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Insta Downloader</title>
+  <meta name="description" content="Paste an Instagram reel or post link and download the video.">
+  <style>
+    :root {
+      --bg: #faf7f5;
+      --card: #ffffff;
+      --text: #1d1a1f;
+      --muted: #6b6470;
+      --border: #e8e2e6;
+      --accent: #d6246e;
+      --accent-2: #f77737;
+      --error-bg: #fdecef;
+      --error-text: #a3123f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #141215;
+        --card: #1e1b20;
+        --text: #f3eff4;
+        --muted: #a49ca8;
+        --border: #2f2a33;
+        --error-bg: #3a1621;
+        --error-text: #ff9db5;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 640px; margin: 0 auto; padding: 48px 16px 64px; }
+    h1 {
+      margin: 0 0 6px;
+      font-size: clamp(28px, 6vw, 40px);
+      letter-spacing: -0.02em;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .sub { margin: 0 0 28px; color: var(--muted); }
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+    input {
+      flex: 1;
+      min-width: 0;
+      padding: 12px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 16px;
+      outline: none;
+    }
+    button, .btn {
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1.2;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .primary { background: linear-gradient(90deg, var(--accent-2), var(--accent)); color: #fff; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .status { margin: 16px 0 0; color: var(--muted); min-height: 24px; }
+    .error {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--error-bg);
+      color: var(--error-text);
+    }
+    .meta { margin: 28px 0 12px; }
+    .meta strong { display: block; }
+    .meta span { color: var(--muted); font-size: 14px; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    .item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .thumb { aspect-ratio: 9 / 16; background: var(--border); position: relative; }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .badge {
+      position: absolute; right: 8px; bottom: 8px;
+      background: rgba(0,0,0,.7); color: #fff;
+      font-size: 12px; padding: 2px 8px; border-radius: 6px;
+    }
+    .item .btn { margin: 10px; }
+    .steps { margin-top: 40px; color: var(--muted); font-size: 14px; }
+    .steps ol { padding-left: 20px; }
+    .spinner {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid currentColor; border-right-color: transparent;
+      display: inline-block; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 480px) {
+      form { flex-wrap: wrap; }
+      input { flex-basis: 100%; }
+      form button { flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Insta Downloader</h1>
+    <p class="sub">Paste an Instagram reel or post link and download the video.</p>
+
+    <form id="form" autocomplete="off">
+      <input id="url" type="url" inputmode="url" placeholder="https://www.instagram.com/reel/..." required>
+      <button type="button" id="paste" class="ghost">Paste</button>
+      <button type="submit" id="go" class="primary">Download</button>
+    </form>
+
+    <div id="status" class="status" aria-live="polite"></div>
+    <div id="result"></div>
+
+    <div class="steps">
+      <strong>How to use</strong>
+      <ol>
+        <li>Open the reel or post on Instagram and tap <em>Share → Copy link</em>.</li>
+        <li>Paste it above. It starts automatically.</li>
+        <li>Hit <em>Download</em> under the video.</li>
+      </ol>
+      Only public posts work. Please respect creators' rights.
+    </div>
+  </main>
+
+  <script>
+    const form = document.getElementById("form");
+    const input = document.getElementById("url");
+    const goBtn = document.getElementById("go");
+    const pasteBtn = document.getElementById("paste");
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+
+    const IG_RE = /instagram\.com\/|instagr\.am\//i;
+
+    function setLoading(on) {
+      goBtn.disabled = on;
+      goBtn.innerHTML = on ? '<span class="spinner"></span> Fetching' : "Download";
+      statusEl.textContent = on ? "Fetching video details..." : "";
+    }
+
+    function showError(msg) {
+      resultEl.innerHTML = "";
+      const div = document.createElement("div");
+      div.className = "error";
+      div.textContent = msg;
+      resultEl.appendChild(div);
+    }
+
+    function fmtDuration(sec) {
+      if (!sec) return "";
+      sec = Math.round(sec);
+      return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+    }
+
+    function render(data, url) {
+      resultEl.innerHTML = "";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const title = document.createElement("strong");
+      title.textContent = (data.title || "Instagram video").slice(0, 120);
+      meta.appendChild(title);
+      if (data.uploader) {
+        const by = document.createElement("span");
+        by.textContent = "@" + data.uploader;
+        meta.appendChild(by);
+      }
+      resultEl.appendChild(meta);
+
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      for (const item of data.items) {
+        const card = document.createElement("div");
+        card.className = "item";
+
+        const thumb = document.createElement("div");
+        thumb.className = "thumb";
+        if (item.thumbnail) {
+          const img = document.createElement("img");
+          img.src = item.thumbnail;
+          img.alt = "Video preview";
+          img.loading = "lazy";
+          img.referrerPolicy = "no-referrer";
+          img.onerror = () => img.remove();
+          thumb.appendChild(img);
+        }
+        const dur = fmtDuration(item.duration);
+        if (dur) {
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = dur;
+          thumb.appendChild(badge);
+        }
+        card.appendChild(thumb);
+
+        const a = document.createElement("a");
+        a.className = "btn primary";
+        a.href = "/api/download?" + new URLSearchParams({ url, index: item.index });
+        a.textContent = data.items.length > 1 ? `Download video ${item.index + 1}` : "Download video";
+        if (item.height) a.title = item.height + "p";
+        card.appendChild(a);
+
+        grid.appendChild(card);
+      }
+      resultEl.appendChild(grid);
+    }
+
+    let inFlight = false;
+    async function fetchInfo() {
+      const url = input.value.trim();
+      if (!url || inFlight) return;
+      if (!IG_RE.test(url)) {
+        showError("That doesn't look like an Instagram link.");
+        return;
+      }
+      inFlight = true;
+      setLoading(true);
+      resultEl.innerHTML = "";
+      try {
+        const res = await fetch("/api/info", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Something went wrong.");
+        render(data, url);
+      } catch (err) {
+        showError(err.message || "Network error. Please try again.");
+      } finally {
+        inFlight = false;
+        setLoading(false);
+      }
+    }
+
+    form.addEventListener("submit", (e) => { e.preventDefault(); fetchInfo(); });
+
+    // Auto-start when a link is pasted into the box.
+    input.addEventListener("paste", () => setTimeout(fetchInfo, 0));
+
+    pasteBtn.addEventListener("click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) { input.value = text.trim(); fetchInfo(); }
+      } catch {
+        input.focus();
+        statusEl.textContent = "Clipboard access blocked. Long-press the box and paste.";
+      }
+    });
+  </script>
+</body>
+</html>
