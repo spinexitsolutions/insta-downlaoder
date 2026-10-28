@@ -304,13 +304,60 @@ def _items_from_api_media(media):
     return items
 
 
+IG_WEB_APP_ID = "936619743392459"  # app id instagram.com's own JavaScript sends
+
+
+def _web_api(loader, path, referer="https://www.instagram.com/"):
+    """GET an api/v1 endpoint the way instagram.com does in the browser (cookie login)."""
+    resp = loader.context._session.get(
+        "https://www.instagram.com/" + path,
+        headers={"X-IG-App-ID": IG_WEB_APP_ID, "X-Requested-With": "XMLHttpRequest",
+                 "X-ASBD-ID": "129477", "Referer": referer, "Accept": "*/*"},
+        allow_redirects=False,
+    )
+    if resp.status_code in (301, 302, 401):
+        raise instaloader.exceptions.LoginRequiredException(f"web api answered {resp.status_code}")
+    if resp.status_code == 404:
+        raise instaloader.exceptions.QueryReturnedNotFoundException("404 not found")
+    if resp.status_code != 200:
+        raise instaloader.exceptions.ConnectionException(f"web api answered {resp.status_code}")
+    data = resp.json()
+    if data.get("status") not in (None, "ok"):
+        message = str(data.get("message") or data.get("status"))
+        if any(k in message for k in ("login_required", "checkpoint", "challenge")):
+            raise instaloader.exceptions.LoginRequiredException(message)
+        raise instaloader.exceptions.ConnectionException(message)
+    return data
+
+
+def _api_json(loader, path, label, has_data, referer="https://www.instagram.com/"):
+    """Try the web API, then the mobile API; return the first response with data."""
+    data = {}
+    for name, fetch in (("web api", lambda: _web_api(loader, path, referer)),
+                        ("mobile api", lambda: loader.context.get_iphone_json(path, {}))):
+        try:
+            data = fetch()
+        except instaloader.exceptions.LoginRequiredException:
+            raise
+        except Exception as exc:
+            _log(f"{label} via {name}", exc)
+            continue
+        if has_data(data):
+            return data
+        _log(f"{label} via {name}", RuntimeError(
+            f"empty answer from Instagram: {str(data)[:300]}"))
+    return data
+
+
 def _post_via_api(shortcode):
     """Logged-in only: Instagram's mobile API, the most reliable source for posts."""
     def read(loader):
         if not loader.context.is_logged_in:
             raise RuntimeError("skipped: not logged in")
         media_id = instaloader.Post.shortcode_to_mediaid(shortcode)
-        data = loader.context.get_iphone_json(f"api/v1/media/{media_id}/info/", {})
+        data = _api_json(loader, f"api/v1/media/{media_id}/info/", f"post {shortcode}",
+                         lambda d: bool(d.get("items")),
+                         referer=f"https://www.instagram.com/p/{shortcode}/")
         media = (data.get("items") or [None])[0]
         if not media:
             raise RuntimeError("media/info returned no items")
@@ -456,7 +503,8 @@ def extract_profile(username):
         pic = profile.profile_pic_url
         if loader.context.is_logged_in:
             try:
-                data = loader.context.get_iphone_json(f"api/v1/users/{profile.userid}/info/", {})
+                data = _api_json(loader, f"api/v1/users/{profile.userid}/info/", f"profile {username}",
+                                 lambda d: bool((d.get("user") or {}).get("hd_profile_pic_url_info")))
                 pic = (data.get("user") or {}).get("hd_profile_pic_url_info", {}).get("url") or pic
             except Exception as exc:
                 _log(f"profile {username} HD picture", exc)
@@ -487,21 +535,27 @@ def extract_story(username, story_id=None):
         if not loader.context.is_logged_in:
             raise instaloader.exceptions.LoginRequiredException("not logged in")
         profile = instaloader.Profile.from_username(loader.context, username)
-        try:
-            data = loader.context.get_iphone_json(f"api/v1/feed/reels_media/?reel_ids={profile.userid}", {})
-            reel = (data.get("reels") or {}).get(str(profile.userid)) \
-                or next(iter(data.get("reels_media") or []), None) or {}
-            medias = [(str(m.get("pk") or ""), _items_from_api_media(m)) for m in reel.get("items") or []]
-        except instaloader.exceptions.LoginRequiredException:
-            raise
-        except Exception as exc:
-            # Older endpoint that instaloader uses; kept as a fallback.
-            _log(f"story {username} via api", exc)
-            medias = []
-            for story in loader.get_stories(userids=[profile.userid]):
-                for s in story.get_items():
-                    item = _item("video", s.video_url, s.url) if s.is_video else _item("image", s.url)
-                    medias.append((str(s.mediaid), [item]))
+        uid = str(profile.userid)
+
+        def reel_items(data):
+            reel = (data.get("reels") or {}).get(uid) \
+                or next((r for r in data.get("reels_media") or [] if str(r.get("id")) == uid), None) or {}
+            return reel.get("items") or []
+
+        data = _api_json(loader, f"api/v1/feed/reels_media/?reel_ids={uid}", f"story {username}",
+                         lambda d: bool(reel_items(d)), referer=f"https://www.instagram.com/stories/{username}/")
+        medias = [(str(m.get("pk") or ""), _items_from_api_media(m)) for m in reel_items(data)]
+        if not medias:
+            # Older endpoint that instaloader uses; last resort.
+            try:
+                for story in loader.get_stories(userids=[profile.userid]):
+                    for s in story.get_items():
+                        item = _item("video", s.video_url, s.url) if s.is_video else _item("image", s.url)
+                        medias.append((str(s.mediaid), [item]))
+            except instaloader.exceptions.LoginRequiredException:
+                raise
+            except Exception as exc:
+                _log(f"story {username} via instaloader", exc)
         if story_id and any(pk == story_id for pk, _ in medias):
             medias = [(pk, its) for pk, its in medias if pk == story_id]
         return [item for _, its in medias for item in its]
