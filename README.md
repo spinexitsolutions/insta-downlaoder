@@ -7,7 +7,7 @@ A light-theme Instagram downloader website, ready for Google AdSense. Paste a li
 | Reels, videos, IGTV | `instagram.com/reel/…`, `instagram.com/p/…`, `instagram.com/tv/…` |
 | Photos | `instagram.com/p/…` |
 | Carousels (multi-photo/video posts) | `instagram.com/p/…` (one download button per item) |
-| Stories | `instagram.com/stories/username/…` (**needs server cookies**, see below) |
+| Stories | `instagram.com/stories/username/…` (**needs an Instagram login**, see below) |
 | Profile pictures | `@username` or `instagram.com/username` |
 | Share links | `instagram.com/share/…` |
 
@@ -24,7 +24,7 @@ Open http://localhost:5000.
 
 ## Settings (environment variables)
 
-All settings live in environment variables; see `.env.example`.
+All settings are environment variables. Locally you can put them in a `.env` file next to `app.py`; see `.env.example`.
 
 | Variable | What it does |
 |---|---|
@@ -34,7 +34,8 @@ All settings live in environment variables; see `.env.example`.
 | `ADSENSE_CLIENT` | AdSense publisher id `ca-pub-…`. Turns on the AdSense script, the verification meta tag and `/ads.txt` |
 | `ADSENSE_SLOT_TOP` / `_RESULT` / `_BOTTOM` | Optional ad unit ids for fixed ad positions. Without them, use Auto ads |
 | `GA_MEASUREMENT_ID` | Optional Google Analytics 4 id |
-| `INSTAGRAM_COOKIES` | Path to a `cookies.txt` of an Instagram account. Required for stories, strongly recommended on servers |
+| `INSTAGRAM_SESSIONID` | Instagram login session (from `python login.py` or the browser). Required for stories, strongly recommended on servers |
+| `INSTAGRAM_COOKIES` | Alternative to `INSTAGRAM_SESSIONID`: path to a `cookies.txt` export |
 | `INSTAGRAM_USERNAME` | Username of that account |
 | `RATE_LIMIT_PER_MINUTE` | Requests per IP per minute to `/api/info` (default 15) |
 
@@ -47,16 +48,33 @@ All settings live in environment variables; see `.env.example`.
 
 Any host that runs Docker works the same (Railway, Fly.io, a VPS with `docker build -t reelsaver . && docker run -p 80:8000 --env-file .env reelsaver`). Without Docker: `gunicorn -w 2 --threads 4 -t 120 -b 0.0.0.0:$PORT app:app` (see `Procfile`).
 
-## Instagram cookies (important on a server)
+## Instagram login (needed for stories)
 
-Instagram blocks or rate-limits requests from data-centre IPs, and only shows stories to logged-in users. To make the site reliable:
+Instagram only shows stories to logged-in users, and it rate-limits anonymous requests from servers. Give the site a login with a **spare** Instagram account (not your main one; it can get restricted).
 
-1. Create a **spare** Instagram account (don't use your main one; it can get restricted).
-2. Log in to it in Chrome and export cookies with a "Get cookies.txt LOCALLY" type extension (Netscape format).
-3. Upload the file to your host as a secret file (on Render: **Environment → Secret Files**, name `cookies.txt`, which lands at `/etc/secrets/cookies.txt`).
-4. Set `INSTAGRAM_COOKIES=/etc/secrets/cookies.txt` and `INSTAGRAM_USERNAME=<that account>`.
+**Option A: login script (easiest)**
 
-Cookies expire every few weeks/months; re-export when downloads start failing. Keep `yt-dlp` and `instaloader` updated: `pip install -U yt-dlp instaloader`.
+```bash
+python login.py
+```
+
+Enter the username and password (and 2FA code if asked). It saves `INSTAGRAM_SESSIONID` and `INSTAGRAM_USERNAME` to a `.env` file next to `app.py`. Restart the site.
+
+**Option B: copy the sessionid from your browser** (use this if Instagram blocks the script login)
+
+1. Log in to the spare account on instagram.com in Chrome.
+2. Press F12 → **Application** → **Cookies** → `https://www.instagram.com`.
+3. Copy the value of `sessionid`.
+4. Create a `.env` file next to `app.py` with:
+   ```
+   INSTAGRAM_SESSIONID=paste_the_value_here
+   INSTAGRAM_USERNAME=your_spare_account
+   ```
+5. Restart the site.
+
+On a live host, add the same two values in the host's **Environment Variables** instead of a `.env` file. A full `cookies.txt` export also works via `INSTAGRAM_COOKIES=/path/to/cookies.txt`.
+
+Sessions expire after a few weeks or if you log out. When stories stop working (the terminal prints "Instagram login expired"), log in again. Keep the libraries updated: `pip install -U yt-dlp instaloader`.
 
 ## AdSense checklist
 

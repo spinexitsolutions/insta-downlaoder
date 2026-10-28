@@ -9,9 +9,11 @@ import html
 import json
 import os
 import re
+import secrets
+import tempfile
 import threading
 from http.cookiejar import MozillaCookieJar
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import instaloader
 import requests
@@ -110,14 +112,51 @@ _loader = None
 _loader_lock = threading.Lock()
 
 
+_session_cache = {}
+
+
 def _load_cookies():
+    """Instagram login cookies from INSTAGRAM_COOKIES (cookies.txt) or INSTAGRAM_SESSIONID."""
     path = os.environ.get("INSTAGRAM_COOKIES")
-    if not path or not os.path.exists(path):
+    sessionid = os.environ.get("INSTAGRAM_SESSIONID", "").strip().strip('"')
+    key = (path, sessionid)
+    if key in _session_cache:
+        return _session_cache[key]
+
+    cookies = None
+    if path and os.path.exists(path):
+        jar = MozillaCookieJar(path)
+        jar.load(ignore_discard=True, ignore_expires=True)
+        cookies = {c.name: c.value for c in jar if "instagram.com" in c.domain}
+    elif sessionid:
+        # The sessionid starts with the numeric user id: "1234567%3A...".
+        cookies = {"sessionid": sessionid, "ds_user_id": unquote(sessionid).split(":")[0]}
+
+    if not cookies or not cookies.get("sessionid"):
+        cookies = None
+    else:
+        # instaloader needs a csrftoken; Instagram accepts any value that matches the header.
+        cookies.setdefault("csrftoken", secrets.token_hex(16))
+    _session_cache[key] = cookies
+    return cookies
+
+
+def cookie_file():
+    """Netscape cookies file for yt-dlp, written from INSTAGRAM_SESSIONID if needed."""
+    path = os.environ.get("INSTAGRAM_COOKIES")
+    if path and os.path.exists(path):
+        return path
+    cookies = _load_cookies()
+    if not cookies:
         return None
-    jar = MozillaCookieJar(path)
-    jar.load(ignore_discard=True, ignore_expires=True)
-    cookies = {c.name: c.value for c in jar if "instagram.com" in c.domain}
-    return cookies if cookies.get("sessionid") else None
+    if "cookie_file" not in _session_cache:
+        fd, tmp = tempfile.mkstemp(prefix="ig_cookies_", suffix=".txt")
+        with os.fdopen(fd, "w") as f:
+            f.write("# Netscape HTTP Cookie File\n")
+            for name, value in cookies.items():
+                f.write(f".instagram.com\tTRUE\t/\tTRUE\t2147483647\t{name}\t{value}\n")
+        _session_cache["cookie_file"] = tmp
+    return _session_cache["cookie_file"]
 
 
 def get_loader():
@@ -134,7 +173,7 @@ def get_loader():
         )
         cookies = _load_cookies()
         if cookies:
-            loader.load_session(os.environ.get("INSTAGRAM_USERNAME", "session"), cookies)
+            loader.load_session(os.environ.get("INSTAGRAM_USERNAME") or "session", cookies)
         _loader = loader
     return _loader
 
@@ -191,9 +230,9 @@ def _best_progressive(entry):
 
 def ydl_options(**extra):
     opts = {"quiet": True, "no_warnings": True, "http_headers": {"User-Agent": USER_AGENT}}
-    cookie_file = os.environ.get("INSTAGRAM_COOKIES")
-    if cookie_file and os.path.exists(cookie_file):
-        opts["cookiefile"] = cookie_file
+    cookies = cookie_file()
+    if cookies:
+        opts["cookiefile"] = cookies
     opts.update(extra)
     return opts
 
@@ -289,8 +328,9 @@ def extract_profile(username):
 
 def extract_story(username, story_id=None):
     if not is_logged_in():
-        raise ExtractError("Instagram only shows stories to logged-in users, and story downloads "
-                           "aren't enabled on this site yet.")
+        print("Story download needs an Instagram login. Run `python login.py` or set "
+              "INSTAGRAM_SESSIONID in .env (see README).", flush=True)
+        raise ExtractError("Story downloads are temporarily unavailable. Please try again later.")
     try:
         with _loader_lock:
             loader = get_loader()
@@ -306,6 +346,9 @@ def extract_story(username, story_id=None):
                         items.append(_item("image", s.url))
     except instaloader.exceptions.ProfileNotExistsException:
         raise ExtractError(f"No Instagram account called @{username}.")
+    except instaloader.exceptions.LoginRequiredException:
+        print("Instagram login expired. Run `python login.py` again.", flush=True)
+        raise ExtractError("Story downloads are temporarily unavailable. Please try again later.")
     except Exception as exc:
         raise ExtractError(_friendly([exc]))
     if not items:

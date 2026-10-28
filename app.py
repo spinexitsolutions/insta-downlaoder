@@ -17,7 +17,22 @@ import requests
 import yt_dlp
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
-import extractor
+
+def load_dotenv(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")):
+    """Read KEY=VALUE lines from .env into the environment (real env vars win)."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_dotenv()
+
+import extractor  # noqa: E402  (reads settings loaded above)
 
 app = Flask(__name__)
 
