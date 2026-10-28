@@ -37,7 +37,8 @@ def main():
     os.environ.pop("INSTAGRAM_SESSIONID", None)
     import extractor  # uses the same login code as the site
 
-    loader = extractor._password_login(headless=False)
+    # Visible window, and 5 minutes so you can answer a security check or log in by hand.
+    loader = extractor._password_login(headless=False, timeout=300)
     if not loader:
         sys.exit("\nLogin failed (see the message above). Nothing was saved.")
 

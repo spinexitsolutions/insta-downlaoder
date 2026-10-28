@@ -193,10 +193,13 @@ def _api_login():
     except Exception as exc:
         print(f"Scripted Instagram login failed: {exc}", flush=True)
         return None
-    return loader.context._session.cookies.get_dict()
+    cookies = loader.context._session.cookies.get_dict()
+    if not cookies.get("sessionid"):
+        print("Scripted Instagram login finished without a session.", flush=True)
+    return cookies
 
 
-def _password_login(headless=True):
+def _password_login(headless=True, timeout=120):
     """Log in with INSTAGRAM_USERNAME/INSTAGRAM_PASSWORD (real browser first) and save the session."""
     # Repeated failed logins get the account flagged, so try at most every 10 minutes.
     if time.time() - _last_login_attempt[0] < LOGIN_COOLDOWN_SECONDS:
@@ -207,7 +210,7 @@ def _password_login(headless=True):
     if browser_login.available():
         print("Logging in to Instagram with a browser...", flush=True)
         try:
-            cookies = browser_login.login(_username(), _password(), headless=headless)
+            cookies = browser_login.login(_username(), _password(), headless=headless, timeout=timeout)
         except Exception as exc:
             print(f"Browser login failed: {type(exc).__name__}: {exc}", flush=True)
     if not cookies:

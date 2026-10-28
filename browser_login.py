@@ -6,6 +6,7 @@ Instagram sees the same "device" every time and asks fewer security questions.
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -60,6 +61,51 @@ def _click_if_present(page, labels):
     return False
 
 
+# Instagram has used several login forms (its own, and Meta's shared one), so match any.
+USERNAME_FIELDS = ('input[name="username"], input[name="email"], input[autocomplete*="username"], '
+                   'input[aria-label*="username" i], input[aria-label*="email" i]')
+PASSWORD_FIELDS = 'input[name="password"], input[name="pass"], input[type="password"]'
+DEBUG_SCREENSHOT = os.path.join(HERE, "login_debug.png")
+
+
+def _screenshot(page):
+    try:
+        page.screenshot(path=DEBUG_SCREENSHOT, full_page=True)
+        print(f"Saved a screenshot of the Instagram page to {DEBUG_SCREENSHOT}", flush=True)
+    except Exception:
+        pass
+
+
+def _fill_login_form(page, username, password):
+    """Fill and submit the login form. Returns False if the form couldn't be found."""
+    try:
+        page.wait_for_selector(PASSWORD_FIELDS, state="visible", timeout=30000)
+    except Exception:
+        return False
+    user_box = page.locator(USERNAME_FIELDS).locator("visible=true")
+    if not user_box.count():
+        # Fall back to the text box right before the password box.
+        user_box = page.locator('input:not([type="password"]):not([type="hidden"])').locator("visible=true")
+    if not user_box.count():
+        return False
+    user_box.first.fill(username)
+    pass_box = page.locator(PASSWORD_FIELDS).locator("visible=true").first
+    pass_box.fill(password)
+    pass_box.press("Enter")
+    # Meta's form has no real submit button, so Enter may do nothing: click "Log in".
+    page.wait_for_timeout(2500)
+    if page.locator(PASSWORD_FIELDS).locator("visible=true").count():
+        for button in (page.get_by_role("button", name=re.compile(r"^\s*log ?in\s*$", re.I)),
+                       page.locator('button[type="submit"]')):
+            try:
+                if button.count():
+                    button.first.click(timeout=3000)
+                    break
+            except Exception:
+                pass
+    return True
+
+
 def _cookies(ctx):
     return {c["name"]: c["value"] for c in ctx.cookies(COOKIE_URL)}
 
@@ -81,11 +127,13 @@ def login(username, password, headless=True, timeout=120, fresh=True):
             page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
             _click_if_present(page, ["Allow all cookies", "Only allow essential cookies", "Decline optional cookies"])
 
-            if not _cookies(ctx).get("sessionid"):
-                page.wait_for_selector('input[name="username"]', timeout=30000)
-                page.fill('input[name="username"]', username)
-                page.fill('input[name="password"]', password)
-                page.press('input[name="password"]', "Enter")
+            if not _cookies(ctx).get("sessionid") and not _fill_login_form(page, username, password):
+                _screenshot(page)
+                if headless:
+                    print(f"Couldn't find Instagram's login form (page: {page.url}).", flush=True)
+                    return None
+                print("Couldn't fill the login form automatically. Please log in yourself in the "
+                      "browser window; this will continue as soon as you're logged in.", flush=True)
 
             deadline = time.time() + timeout
             warned = False
@@ -112,7 +160,8 @@ def login(username, password, headless=True, timeout=120, fresh=True):
                         print(f"Instagram login error: {message.strip()}", flush=True)
                         return None
                 page.wait_for_timeout(1000)
-            print("Instagram login timed out.", flush=True)
+            _screenshot(page)
+            print(f"Instagram login timed out (page: {page.url}).", flush=True)
             return None
         finally:
             ctx.close()
