@@ -92,10 +92,12 @@ def best_progressive_format(entry):
     formats = entry.get("formats") or []
     progressive = [
         f for f in formats
+        # A missing codec means "unknown", not "absent": Instagram's plain
+        # video_versions formats carry no codec info but include audio.
         if f.get("url")
-        and f.get("vcodec") not in (None, "none")
-        and f.get("acodec") not in (None, "none")
-        and f.get("protocol", "https").startswith("http")
+        and f.get("vcodec") != "none"
+        and f.get("acodec") != "none"
+        and (f.get("protocol") or "https").startswith("http")
     ]
     if progressive:
         return max(progressive, key=lambda f: (f.get("height") or 0, f.get("tbr") or 0))
@@ -124,6 +126,8 @@ def friendly_error(exc):
                 "Try again later, or set INSTAGRAM_COOKIES (see README).")
     if "unsupported url" in lowered:
         return "This link is not supported. Paste an Instagram post or reel link."
+    if "ffmpeg" in lowered:
+        return "This video needs ffmpeg to download. Install ffmpeg and restart the app (see README)."
     if "no video" in lowered:
         return "No video found in this post."
     return "Could not fetch the video. Check the link and try again."
@@ -150,7 +154,7 @@ def api_info():
     for i, entry in enumerate(media_entries(info)):
         fmt = best_progressive_format(entry)
         has_split_streams = any(
-            f.get("vcodec") not in (None, "none") for f in entry.get("formats") or []
+            f.get("vcodec") != "none" for f in entry.get("formats") or []
         )
         if not fmt and not has_split_streams:
             continue
@@ -228,8 +232,10 @@ def stream_remote(media_url, filename):
 
 def download_and_merge(url, index, filename):
     tmpdir = tempfile.mkdtemp(prefix="instadl_")
+    # Merging separate video/audio streams needs ffmpeg; without it take the
+    # best single file instead of failing.
     opts = ydl_options(
-        format="bv*+ba/b",
+        format="bv*+ba/b" if shutil.which("ffmpeg") else "b",
         merge_output_format="mp4",
         outtmpl=os.path.join(tmpdir, "%(id)s.%(ext)s"),
         playlist_items=str(index + 1),
